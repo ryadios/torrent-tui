@@ -1,18 +1,20 @@
 {
-  "name": "torrent-tui",
-  "module": "src/index.tsx",
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "dev": "bun run --watch src/index.ts"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@opentui/core": "^0.1.90"
-  }
+	"name": "torrent-tui",
+	"module": "src/index.tsx",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "bun run --watch src/index.ts",
+		"check:fix": "biome check --write --unsafe"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.8",
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@opentui/core": "^0.1.90"
+	}
 }
