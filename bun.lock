@@ -5,6 +5,7 @@
       "name": "react",
       "dependencies": {
         "@opentui/core": "^0.1.90",
+        "zod": "^3.23.8",
       },
       "devDependencies": {
         "@biomejs/biome": "2.4.8",

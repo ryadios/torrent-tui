@@ -4,7 +4,9 @@
 	"type": "module",
 	"private": true,
 	"scripts": {
+		"start": "bun run src/index.ts",
 		"dev": "bun run --watch src/index.ts",
+		"help": "bun run src/index.ts --help",
 		"check:fix": "biome check --write --unsafe"
 	},
 	"devDependencies": {
@@ -15,6 +17,7 @@
 		"typescript": "^5"
 	},
 	"dependencies": {
-		"@opentui/core": "^0.1.90"
+		"@opentui/core": "^0.1.90",
+		"zod": "^3.23.8"
 	}
 }
