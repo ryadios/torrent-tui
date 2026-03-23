@@ -51,44 +51,119 @@ bun run check:fix
 - Group imports: external → internal → types
 - No barrel exports unless necessary
 
-### Architecture Pattern
+## Architecture
 
 ```
 src/
-├── app.ts              # App class - orchestration
-├── index.ts            # Entry point
-├── store/              # State management (Store class)
-├── layout/             # UI Components (render only)
-├── controllers/        # Input handling + logic
-├── config/             # Configuration I/O
-├── constants/          # Constants
-├── theme/              # Theming
-└── utils/             # Utilities
+├── app.ts                    # App class - orchestration
+├── index.ts                  # Entry point
+├── store/                    # State management (Store class)
+├── layout/                   # UI Components
+│   ├── sidebar.ts            # Sidebar with navigation items
+│   └── content-window.ts     # Main content area
+├── controllers/             # Input handling + logic
+│   └── app-controller.ts     # Keyboard input handling
+├── config/                   # Configuration I/O
+├── constants/                # App constants
+├── theme/                    # Theming
+├── types/                    # TypeScript interfaces
+│   └── layout.ts            # LayoutDimensions interface
+└── utils/                    # Utilities
+    └── layout.ts            # calculateLayout()
 ```
 
-**Component Pattern:**
+### Layout System
+
+Components use absolute positioning (not flexbox) for side-by-side placement:
+
+```typescript
+// src/types/layout.ts
+interface LayoutDimensions {
+	terminal: { width: number; height: number };
+	sidebar: { x: number; y: number; width: number; height: number };
+	content: { x: number; y: number; width: number; height: number };
+}
+
+// src/utils/layout.ts
+function calculateLayout(terminalWidth: number, terminalHeight: number): LayoutDimensions
+```
+
+### Component Pattern
+
+Components render once with absolute positioning, update in-place:
+
 ```typescript
 class Sidebar {
-  constructor(renderer: CliRenderer, store: Store) { }
-  render(): void { /* reads store, builds UI */ }
-  update(): void { /* re-renders */ }
+	private container: BoxRenderable;
+	private itemTexts: SidebarItem[] = [];
+
+	constructor(renderer: CliRenderer, store: Store, layout: LayoutDimensions) {
+		this.container = this.build();  // Creates all elements
+		this.renderer.root.add(this.container);
+	}
+
+	update(): void {
+		// Updates text content in-place, no destroy/recreate
+		for (const item of this.itemTexts) {
+			(item.text as unknown as { content: string }).content = "new content";
+		}
+	}
+
+	updateLayout(layout: LayoutDimensions): void {
+		// Handle terminal resize
+	}
 }
 ```
 
-**Store Pattern:**
+### Store Pattern
+
 ```typescript
 class Store {
-  getState(): AppState { }
-  setState(partial: Partial<AppState>): void { /* notifies subscribers */ }
-  subscribe(listener: (state: AppState) => void): () => void { }
+	getState(): AppState { }
+	setState(partial: Partial<AppState>): void { /* notifies subscribers */ }
+	subscribe(listener: (state: AppState) => void): () => void { }
 }
 ```
 
-**Controller Pattern:**
+### Controller Pattern
+
 ```typescript
 class AppController {
-  constructor(renderer: CliRenderer, store: Store, sidebar: Sidebar) { }
-  start(): void { /* subscribe store, register keyboard handlers */ }
+	constructor(
+		renderer: CliRenderer,
+		store: Store,
+		sidebar: Sidebar,
+		contentWindow: ContentWindow,
+	) { }
+
+	start(): void {
+		this.store.subscribe(() => {
+			this.sidebar.update();
+			this.contentWindow.update();
+		});
+		this.renderer.keyInput.on("keypress", (key) => {
+			this.handleKeyPress(key);
+		});
+	}
+}
+```
+
+### App Orchestration
+
+```typescript
+class App {
+	private layout!: LayoutDimensions;
+
+	private async initialize(): Promise<void> {
+		this.renderer = await createCliRenderer({ exitOnCtrlC: true });
+		this.store = new Store(INITIAL_STATE);
+		this.layout = calculateLayout(this.renderer.width, this.renderer.height);
+	}
+
+	private setupComponents(): void {
+		this.sidebar = new Sidebar(this.renderer, this.store, this.layout);
+		this.contentWindow = new ContentWindow(this.renderer, this.store, this.layout);
+	}
 }
 ```
 
@@ -101,6 +176,7 @@ class AppController {
 ### OpenTUI Specific
 - Use **construct API** (`Box()`, `Text()`) not JSX
 - Pass `renderer` instance to `BoxRenderable`/`TextRenderable` constructors
+- Use `position: "absolute"` with `left`, `top` for side-by-side layout
 - Components build their own renderables, don't modify external state
 - Never call `process.exit()` directly - use `renderer.destroy()`
 
@@ -110,11 +186,12 @@ class AppController {
 
 ## Adding New Components
 
-1. Create component in `layout/` or relevant directory
-2. Component receives `renderer` and `store` via constructor
-3. Component has `render()` method that reads from store
-4. Subscribe to store changes via controller or direct subscription
-5. Update components by calling their `update()` or `render()` method
+1. Create component in `layout/` with kebab-case name (e.g., `new-component.ts`)
+2. Component receives `renderer`, `store`, and `layout` via constructor
+3. Component builds its UI once in constructor using absolute positioning
+4. `update()` method modifies existing elements in-place (don't destroy/recreate)
+5. Add `updateLayout()` method for resize handling
+6. Subscribe to store changes in controller, call `update()` on changes
 
 ## Adding New State
 
