@@ -23,6 +23,10 @@ export class App {
 	private layout!: LayoutDimensions;
 	private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
+	constructor(torrentPath: string | null = null) {
+		this.torrentPath = torrentPath;
+	}
+
 	async start(): Promise<void> {
 		loadConfig();
 

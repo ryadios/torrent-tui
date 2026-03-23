@@ -108,8 +108,6 @@ export class Sidebar {
 				fg: isSelected ? theme.accent : theme.fgPrimary,
 			});
 
-			if (i === 2) console.log("i was 2");
-
 			itemBox.add(text);
 			this.container.add(itemBox);
 			this.itemTexts.push({ text, globalIndex });
