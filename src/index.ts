@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { App } from "./app";
+import { existsSync, readFileSync } from "node:fs";
+import { decode } from "./torrent/parser";
 
 function fail(msg: string): never {
 	console.error(msg);
@@ -19,8 +19,16 @@ function validateTorrentArg(arg: string): string {
 }
 
 const [arg] = process.argv.slice(2);
-let torrentPath: string | null = null; // check for torrrent file in args
-if (arg) torrentPath = validateTorrentArg(arg);
 
-const app = new App(torrentPath);
+if (arg) {
+	const torrentPath = validateTorrentArg(arg);
+	const fileContent = readFileSync(torrentPath);
+	const decoded = decode(fileContent);
+	console.log(JSON.stringify(decoded, null, 2));
+	process.exit(0);
+}
+
+import { App } from "./app";
+
+const app = new App(null);
 app.start();
