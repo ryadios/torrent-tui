@@ -23,8 +23,12 @@ const [arg] = process.argv.slice(2);
 if (arg) {
 	const torrentPath = validateTorrentArg(arg);
 	const fileContent = readFileSync(torrentPath);
-	const decoded = decode(fileContent);
-	console.log(JSON.stringify(decoded, null, 2));
+	try {
+		const decoded = decode(fileContent);
+		console.log(JSON.stringify(decoded, null, 2));
+	} catch (e) {
+		fail(`Error: Invalid bencode - ${e instanceof Error ? e.message : e}`);
+	}
 	process.exit(0);
 }
 

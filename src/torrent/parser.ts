@@ -14,7 +14,8 @@ export function parseIntB(data: Uint8Array, i: number): [number, number] {
 	if (data[i] !== 105) throw new Error("Invalid integer"); // check for "i"
 	i++;
 	const start = i;
-	while (data[i] !== 101) i++; // loop until "e"
+	while (i < data.length && data[i] !== 101) i++; // loop until "e"
+	if (i >= data.length) throw new Error("Unterminated integer");
 	const value = Number.parseInt(TEXT_DECODER.decode(data.slice(start, i)), 10);
 	return [value, i + 1];
 }
@@ -24,9 +25,13 @@ export function parseIntB(data: Uint8Array, i: number): [number, number] {
  */
 export function parseStringB(data: Uint8Array, i: number): [string, number] {
 	let j = i;
-	while (data[j] !== 58) j++; // check for ":" seperator
+	while (j < data.length && data[j] !== 58) j++; // check for ":" separator
+	if (j >= data.length) throw new Error("Invalid string: missing separator");
 	const len = Number.parseInt(TEXT_DECODER.decode(data.slice(i, j)), 10);
+	if (len < 0) throw new Error("Invalid string: negative length");
 	j++;
+	if (j + len > data.length)
+		throw new Error("Invalid string: length exceeds data");
 	const str = TEXT_DECODER.decode(data.slice(j, j + len));
 	return [str, j + len];
 }
@@ -41,11 +46,12 @@ export function parseListB(
 	if (data[i] !== 108) throw new Error("Invalid list"); // check for "l"
 	i++;
 	const arr: BencodeValue[] = [];
-	while (data[i] !== 101) { // loop until "e"
+	while (i < data.length && data[i] !== 101) {
 		const [val, newI] = parseAny(data, i);
 		arr.push(val);
 		i = newI;
 	}
+	if (i >= data.length) throw new Error("Unterminated list");
 	return [arr, i + 1];
 }
 
@@ -59,13 +65,14 @@ export function parseDictB(
 	if (data[i] !== 100) throw new Error("Invalid dictionary"); // check for "d"
 	i++;
 	const dict: { [key: string]: BencodeValue } = {};
-	while (data[i] !== 101) { // loop until "e"
+	while (i < data.length && data[i] !== 101) {
 		const [key, newI] = parseStringB(data, i);
 		const keyStr = key;
 		const [val, nextI] = parseAny(data, newI);
 		dict[keyStr] = val;
 		i = nextI;
 	}
+	if (i >= data.length) throw new Error("Unterminated dictionary");
 	return [dict, i + 1];
 }
 
@@ -96,6 +103,11 @@ export function decode(data: Uint8Array): BencodeValue {
  */
 export function encode(value: BencodeValue): Uint8Array {
 	if (typeof value === "number") {
+		if (!Number.isFinite(value)) {
+			throw new Error(
+				"Cannot encode non-finite numbers (NaN, Infinity, -Infinity)",
+			);
+		}
 		return TEXT_ENCODER.encode(`i${value}e`);
 	}
 	if (typeof value === "string") {
