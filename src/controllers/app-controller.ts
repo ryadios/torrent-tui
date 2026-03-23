@@ -2,6 +2,7 @@ import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { SIDEBAR_ITEMS } from "../constants";
 import type { ContentWindow } from "../layout/content-window";
 import type { Sidebar } from "../layout/sidebar";
+import type { ToastManager } from "../layout/toast-manager";
 import type { Store } from "../store";
 
 export class AppController {
@@ -9,17 +10,20 @@ export class AppController {
 	private store: Store;
 	private sidebar: Sidebar;
 	private contentWindow: ContentWindow;
+	private toastManager: ToastManager;
 
 	constructor(
 		renderer: CliRenderer,
 		store: Store,
 		sidebar: Sidebar,
 		contentWindow: ContentWindow,
+		toastManager: ToastManager,
 	) {
 		this.renderer = renderer;
 		this.store = store;
 		this.sidebar = sidebar;
 		this.contentWindow = contentWindow;
+		this.toastManager = toastManager;
 	}
 
 	start(): void {
@@ -34,6 +38,10 @@ export class AppController {
 	}
 
 	private handleKeyPress(key: KeyEvent): void {
+		if (this.toastManager.handleInput(key.name)) {
+			return;
+		}
+
 		const totalItems =
 			SIDEBAR_ITEMS.status.length + SIDEBAR_ITEMS.category.length;
 		const state = this.store.getState();

@@ -3,6 +3,7 @@ import { loadConfig } from "./config";
 import { AppController } from "./controllers/app-controller";
 import { ContentWindow } from "./layout/content-window";
 import { Sidebar } from "./layout/sidebar";
+import { ToastManager } from "./layout/toast-manager";
 import { Store } from "./store";
 import type { LayoutDimensions } from "./types/layout";
 import { calculateLayout } from "./utils/layout";
@@ -17,6 +18,7 @@ export class App {
 	private store!: Store;
 	private sidebar!: Sidebar;
 	private contentWindow!: ContentWindow;
+	private toastManager!: ToastManager;
 	private controller!: AppController;
 	private layout!: LayoutDimensions;
 	private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -31,7 +33,9 @@ export class App {
 	}
 
 	private async initialize(): Promise<void> {
-		this.renderer = await createCliRenderer({ exitOnCtrlC: true });
+		this.renderer = await createCliRenderer({
+			exitOnCtrlC: true,
+		});
 		this.store = new Store(INITIAL_STATE);
 		this.layout = calculateLayout(this.renderer.width, this.renderer.height);
 	}
@@ -43,6 +47,7 @@ export class App {
 			this.store,
 			this.layout,
 		);
+		this.toastManager = new ToastManager(this.renderer, this.layout);
 	}
 
 	private setupControllers(): void {
@@ -51,6 +56,7 @@ export class App {
 			this.store,
 			this.sidebar,
 			this.contentWindow,
+			this.toastManager,
 		);
 		this.controller.start();
 	}
@@ -71,6 +77,7 @@ export class App {
 			this.layout = calculateLayout(width, height);
 			this.sidebar.updateLayout(this.layout);
 			this.contentWindow.updateLayout(this.layout);
-		}, 300);
+			this.toastManager.updateLayout(this.layout);
+		}, 100);
 	}
 }

@@ -11,3 +11,9 @@ export const SIDEBAR_ITEMS = {
 } as const;
 
 export type SidebarSection = keyof typeof SIDEBAR_ITEMS;
+
+// Toast configuration
+export const TOAST_WIDTH = 40;
+export const TOAST_MARGIN = 1;
+export const TOAST_DEFAULT_DURATION = 3000;
+export const TOAST_MAX_COUNT = 3;
