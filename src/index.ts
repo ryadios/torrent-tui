@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { App } from "./app";
+import { getPeers } from "./torrent/get_peers";
 
 function fail(msg: string): never {
 	console.error(msg);
@@ -10,17 +10,30 @@ function validateTorrentArg(arg: string): string {
 	if (!arg.toLowerCase().endsWith(".torrent")) {
 		fail(`Error: '${arg}' is not a .torrent file`);
 	}
-
 	if (!existsSync(arg)) {
 		fail(`Error: File not found: '${arg}'`);
 	}
-
 	return arg;
 }
 
-const [arg] = process.argv.slice(2);
-let torrentPath: string | null = null; // check for torrrent file in args
-if (arg) torrentPath = validateTorrentArg(arg);
+async function main() {
+	const [arg] = process.argv.slice(2);
 
-const app = new App(torrentPath);
-app.start();
+	if (arg) {
+		const torrentPath = validateTorrentArg(arg);
+
+		try {
+			await getPeers(torrentPath, 6881, 50);
+		} catch (e) {
+			fail(`Error: ${e instanceof Error ? e.message : e}`);
+		}
+
+		return;
+	}
+
+	const { App } = await import("./app");
+	const app = new App();
+	app.start();
+}
+
+main();
