@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { decode } from "./torrent/parser";
+import { existsSync } from "node:fs";
+import { getPeers } from "./torrent/get_peers";
 
 function fail(msg: string): never {
 	console.error(msg);
@@ -10,29 +10,30 @@ function validateTorrentArg(arg: string): string {
 	if (!arg.toLowerCase().endsWith(".torrent")) {
 		fail(`Error: '${arg}' is not a .torrent file`);
 	}
-
 	if (!existsSync(arg)) {
 		fail(`Error: File not found: '${arg}'`);
 	}
-
 	return arg;
 }
 
-const [arg] = process.argv.slice(2);
+async function main() {
+	const [arg] = process.argv.slice(2);
 
-if (arg) {
-	const torrentPath = validateTorrentArg(arg);
-	const fileContent = readFileSync(torrentPath);
-	try {
-		const decoded = decode(fileContent);
-		console.log(JSON.stringify(decoded, null, 2));
-	} catch (e) {
-		fail(`Error: Invalid bencode - ${e instanceof Error ? e.message : e}`);
+	if (arg) {
+		const torrentPath = validateTorrentArg(arg);
+
+		try {
+			await getPeers(torrentPath, 6881, 50);
+		} catch (e) {
+			fail(`Error: ${e instanceof Error ? e.message : e}`);
+		}
+
+		return;
 	}
-	process.exit(0);
+
+	const { App } = await import("./app");
+	const app = new App();
+	app.start();
 }
 
-import { App } from "./app";
-
-const app = new App(null);
-app.start();
+main();
