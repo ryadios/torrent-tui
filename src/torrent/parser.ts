@@ -1,6 +1,7 @@
 export type BencodeValue =
 	| string
 	| number
+	| Uint8Array
 	| BencodeValue[]
 	| { [key: string]: BencodeValue };
 
@@ -21,19 +22,29 @@ export function parseIntB(data: Uint8Array, i: number): [number, number] {
 }
 
 /**
- * <len>:<str> -> string
+ * <len>:<bytes> -> Uint8Array (raw binary string)
  */
-export function parseStringB(data: Uint8Array, i: number): [string, number] {
+export function parseByteString(
+	data: Uint8Array,
+	i: number,
+): [Uint8Array, number] {
 	let j = i;
-	while (j < data.length && data[j] !== 58) j++; // check for ":" separator
+	while (j < data.length && data[j] !== 58) j++;
 	if (j >= data.length) throw new Error("Invalid string: missing separator");
 	const len = Number.parseInt(TEXT_DECODER.decode(data.slice(i, j)), 10);
 	if (len < 0) throw new Error("Invalid string: negative length");
 	j++;
 	if (j + len > data.length)
 		throw new Error("Invalid string: length exceeds data");
-	const str = TEXT_DECODER.decode(data.slice(j, j + len));
-	return [str, j + len];
+	return [data.slice(j, j + len), j + len];
+}
+
+/**
+ * <len>:<str> -> string (UTF-8 text)
+ */
+export function parseStringB(data: Uint8Array, i: number): [string, number] {
+	const [bytes, newI] = parseByteString(data, i);
+	return [TEXT_DECODER.decode(bytes), newI];
 }
 
 /**
@@ -85,7 +96,7 @@ export function parseAny(data: Uint8Array, i: number): [BencodeValue, number] {
 	if (byte === 105) return parseIntB(data, i);
 	if (byte === 108) return parseListB(data, i);
 	if (byte === 100) return parseDictB(data, i);
-	if (byte >= 48 && byte <= 57) return parseStringB(data, i);
+	if (byte >= 48 && byte <= 57) return parseByteString(data, i);
 	throw new Error(`Invalid bencode type at index ${i}: ${byte}`);
 }
 
@@ -114,6 +125,10 @@ export function encode(value: BencodeValue): Uint8Array {
 		const bytes = TEXT_ENCODER.encode(value);
 		const len = TEXT_ENCODER.encode(String(bytes.length));
 		return Uint8Array.from([...len, 58, ...bytes]);
+	}
+	if (value instanceof Uint8Array) {
+		const len = TEXT_ENCODER.encode(String(value.length));
+		return Uint8Array.from([...len, 58, ...value]);
 	}
 	if (Array.isArray(value)) {
 		const parts: Uint8Array[] = [TEXT_ENCODER.encode("l")];

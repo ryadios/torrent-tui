@@ -3,8 +3,22 @@ import { readFileSync } from "node:fs";
 import { SHA1 } from "bun";
 import { decode, encode } from "./parser";
 
+const TEXT_DECODER = new TextDecoder();
+
+export interface PeerInfo {
+	ip: string;
+	port: number;
+}
+
+export interface TrackerResponse {
+	complete: number;
+	incomplete: number;
+	interval: number;
+	peers: PeerInfo[];
+}
+
 type TorrentFile = {
-	announce: string;
+	announce: Uint8Array;
 	info: {
 		length?: number;
 		files?: Array<{
@@ -21,11 +35,33 @@ function encodeBytes(buf: Uint8Array): string {
 	return result;
 }
 
-export async function getPeers(filePath: string, port = 6881, numwant = 50) {
+function parseCompactPeers(data: Uint8Array): PeerInfo[] {
+	const peers: PeerInfo[] = [];
+	const peerSize = 6;
+
+	if (data.length % peerSize !== 0) {
+		throw new Error(
+			`Invalid compact peer data: length ${data.length} is not a multiple of 6`,
+		);
+	}
+
+	for (let i = 0; i < data.length; i += peerSize) {
+		const ip = `${data[i]}.${data[i + 1]}.${data[i + 2]}.${data[i + 3]}`;
+		const port = (data[i + 4] << 8) | data[i + 5];
+		peers.push({ ip, port });
+	}
+
+	return peers;
+}
+
+export async function getPeers(
+	filePath: string,
+	port = 6881,
+	numwant = 50,
+): Promise<TrackerResponse> {
 	const fileContent = readFileSync(filePath);
 	const decoded = decode(fileContent);
 
-	// 1. Validate top-level structure
 	if (
 		typeof decoded !== "object" ||
 		decoded === null ||
@@ -38,21 +74,18 @@ export async function getPeers(filePath: string, port = 6881, numwant = 50) {
 		throw new Error("Missing announce or info");
 	}
 
-	// 2. Cast after validation
 	const torrent = decoded as TorrentFile;
-
 	const { announce, info } = torrent;
 
-	// (optional but good) validate announce type
-	if (typeof announce !== "string") {
-		throw new Error("Invalid announce URL");
+	const announceUrl = TEXT_DECODER.decode(announce);
+
+	if (announceUrl.startsWith("udp://")) {
+		throw new Error(`UDP tracker not supported yet: ${announceUrl}`);
 	}
 
-	// 3. Compute info hash
-	const infoEncoded = encode(info); // still BencodeValue underneath
-	const infoHash = SHA1.hash(infoEncoded);
+	const infoEncoded = encode(info);
+	const infoHashBytes = SHA1.hash(infoEncoded);
 
-	// 4. Compute left (just-in-time validation)
 	let left: number;
 
 	if (typeof info.length === "number") {
@@ -73,16 +106,13 @@ export async function getPeers(filePath: string, port = 6881, numwant = 50) {
 		throw new Error("Invalid info: missing length/files");
 	}
 
-	console.log({ announce, infoHash, left });
-
 	const peerIdPrefix = "-UT2210-";
 	const randomPart = randomBytes(20 - peerIdPrefix.length);
-
 	const peerId = Buffer.concat([Buffer.from(peerIdPrefix), randomPart]);
 
 	const params = {
-		info_hash: infoHash,
-		peer_id: peerId,
+		info_hash: encodeBytes(infoHashBytes),
+		peer_id: encodeBytes(peerId),
 		port: port,
 		uploaded: 0,
 		downloaded: 0,
@@ -95,19 +125,15 @@ export async function getPeers(filePath: string, port = 6881, numwant = 50) {
 	const queryParts: string[] = [];
 
 	for (const [key, val] of Object.entries(params)) {
-		if (val instanceof Uint8Array || Buffer.isBuffer(val)) {
-			queryParts.push(`${key}=${encodeBytes(val)}`);
-		} else {
-			queryParts.push(`${key}=${encodeURIComponent(String(val))}`);
-		}
+		queryParts.push(`${key}=${val}`);
 	}
 
 	const queryString = queryParts.join("&");
-	const url = announce.includes("?")
-		? `${announce}&${queryString}`
-		: `${announce}?${queryString}`;
+	const url = announceUrl.includes("?")
+		? `${announceUrl}&${queryString}`
+		: `${announceUrl}?${queryString}`;
 
-	console.log(url);
+	console.log(`Tracker URL: ${url}`);
 
 	const res = await fetch(url, {
 		headers: {
@@ -121,21 +147,48 @@ export async function getPeers(filePath: string, port = 6881, numwant = 50) {
 	}
 
 	const buffer = new Uint8Array(await res.arrayBuffer());
-
 	const trackerDecoded = decode(buffer);
 
 	if (
 		typeof trackerDecoded !== "object" ||
 		trackerDecoded === null ||
 		Array.isArray(trackerDecoded)
-	)
+	) {
 		throw new Error("Invalid tracker response");
+	}
 
-	if ("failure reason" in trackerDecoded)
+	if ("failure reason" in trackerDecoded) {
 		throw new Error(`Tracker failure: ${trackerDecoded["failure reason"]}`);
+	}
 
-	if (!("peers" in trackerDecoded)) throw new Error("No peers in response");
+	if (!("peers" in trackerDecoded)) {
+		throw new Error("No peers in response");
+	}
 
-	const peersData = trackerDecoded.peers;
-	console.log(peersData);
+	const peersRaw = trackerDecoded.peers;
+	if (!(peersRaw instanceof Uint8Array)) {
+		throw new Error(
+			"Expected compact peer data (Uint8Array), got non-binary response",
+		);
+	}
+
+	const peers = parseCompactPeers(peersRaw);
+
+	const interval =
+		typeof trackerDecoded.interval === "number"
+			? trackerDecoded.interval
+			: 1800;
+	const complete =
+		typeof trackerDecoded.complete === "number" ? trackerDecoded.complete : 0;
+	const incomplete =
+		typeof trackerDecoded.incomplete === "number"
+			? trackerDecoded.incomplete
+			: 0;
+
+	console.log(`Found ${peers.length} peers:`);
+	for (const peer of peers) {
+		console.log(`  ${peer.ip}:${peer.port}`);
+	}
+
+	return { complete, incomplete, interval, peers };
 }
