@@ -32,3 +32,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Plan document (source of truth is in Notes)
+PLAN.md
+
+# Test torrent files
+*.torrent
