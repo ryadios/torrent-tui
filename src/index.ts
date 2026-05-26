@@ -140,11 +140,79 @@ async function runHandshake(torrentPath: string): Promise<void> {
 	manager.close();
 }
 
+async function runDownload(torrentPath: string): Promise<void> {
+	const { announce } = await import("./torrent/tracker/http-tracker");
+	const { PeerManager } = await import("./torrent/peer/manager");
+	const { getPeerId, peerIdToString } = await import("./torrent/peer/peer-id");
+	const { metadata, session } = await loadTorrent(torrentPath);
+	const { log } = await import("./torrent/metadata");
+
+	metadata.logSummary();
+	log("peer-id", peerIdToString(getPeerId()));
+
+	await session.start();
+
+	const trackerResult = await announce(metadata).catch(() => null);
+	const peers = trackerResult?.peers ?? [];
+	console.log("");
+
+	const manager = new PeerManager(metadata);
+	await manager.start();
+	await manager.connect(peers);
+
+	if (manager.connections.size === 0) {
+		log("error", "no peers connected — cannot download");
+		manager.close();
+		return;
+	}
+
+	const downloader = session.download(manager);
+
+	await new Promise<void>((resolve) => {
+		session.on("complete", () => resolve());
+		process.on("SIGINT", () => {
+			downloader.stop();
+			resolve();
+		});
+	});
+
+	const downloaded = session.storage["downloadedPieces"].size;
+	const W = 80;
+	const line = "-".repeat(W);
+
+	console.log(`\n${line}`);
+	console.log("  Download Summary");
+	console.log(line);
+	console.log(`  torrent      ${metadata.name}`);
+	console.log(`  pieces       ${downloaded} / ${metadata.pieceCount} downloaded`);
+	console.log(`  status       ${session.status}`);
+
+	if (downloaded > 0) {
+		const resumeDir = join(
+			(await import("./utils/paths")).getDataDir(),
+			"resume",
+		);
+		const hex = Buffer.from(metadata.infoHash).toString("hex");
+		console.log(`  resume       ${resumeDir}/${hex}.json`);
+	}
+
+	console.log("");
+	console.log("  files");
+	for (const file of metadata.files) {
+		const fullPath = join(session.downloadPath, file.path);
+		console.log(`    ${existsSync(fullPath) ? "✓" : "✗"}  ${fullPath}`);
+	}
+	console.log(line);
+
+	manager.close();
+}
+
 async function main() {
 	const args = process.argv.slice(2);
 	const torrentArg = args.find((a) => !a.startsWith("--"));
 	const isVerify = args.includes("--verify");
 	const isHandshake = args.includes("--handshake");
+	const isDownload = args.includes("--download");
 
 	if (torrentArg) {
 		const torrentPath = validateTorrentArg(torrentArg);
@@ -158,6 +226,13 @@ async function main() {
 
 		if (isHandshake) {
 			await runHandshake(torrentPath).catch((e) =>
+				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			);
+			return;
+		}
+
+		if (isDownload) {
+			await runDownload(torrentPath).catch((e) =>
 				fail(`Error: ${e instanceof Error ? e.message : e}`),
 			);
 			return;

@@ -151,6 +151,10 @@ export class StorageManager {
 		return { valid, missing, corrupt };
 	}
 
+	markPiece(index: number): void {
+		this.downloadedPieces.add(index);
+	}
+
 	hasPiece(pieceIndex: number): boolean {
 		return this.downloadedPieces.has(pieceIndex);
 	}

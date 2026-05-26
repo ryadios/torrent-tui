@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { log } from "../metadata.ts";
 import { PeerConnection } from "./connection.ts";
 import { PeerListener } from "./listener.ts";
@@ -6,7 +7,7 @@ import { getPeerId } from "./peer-id.ts";
 import type { TorrentMetadata } from "../metadata.ts";
 import type { PeerInfo } from "../types.ts";
 
-export class PeerManager {
+export class PeerManager extends EventEmitter {
 	readonly connections: Map<string, PeerConnection> = new Map();
 	private listener: PeerListener;
 	private maxConnections: number;
@@ -14,6 +15,7 @@ export class PeerManager {
 	private pieceCount: number;
 
 	constructor(metadata: TorrentMetadata, maxConnections = 50) {
+		super();
 		this.infoHash = metadata.infoHash;
 		this.pieceCount = metadata.pieceCount;
 		this.maxConnections = maxConnections;
@@ -54,6 +56,7 @@ export class PeerManager {
 		try {
 			await conn.connect();
 			this.connections.set(key, conn);
+			this.emit("peerAdded", conn);
 		} catch {
 			// timeout/error already logged by connection.ts
 		}

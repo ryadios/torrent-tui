@@ -195,7 +195,6 @@ export class PeerConnection extends EventEmitter {
 
 	sendRequest(index: number, begin: number, length: number): void {
 		this.write(encodeRequest(index, begin, length));
-		log("-> REQUEST", `piece=${index} begin=${begin} len=${length}  to ${this.address}:${this.port}`);
 	}
 
 	sendCancel(index: number, begin: number, length: number): void {

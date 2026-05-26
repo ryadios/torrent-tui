@@ -6,7 +6,7 @@
 	"scripts": {
 		"start": "bun src/index.ts",
 		"dev": "bun --watch src/index.ts",
-		"check": "bun src/index.ts --handshake",
+		"check": "bun src/index.ts --download",
 		"typecheck": "tsc --noEmit",
 		"check:fix": "biome check --write --unsafe"
 	},
