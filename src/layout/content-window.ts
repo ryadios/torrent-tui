@@ -1,82 +1,75 @@
-import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
+import { BoxRenderable, type CliRenderer } from "@opentui/core";
 import type { Store } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
+import { TorrentTable } from "./torrent-view";
+
+function innerLayout(layout: LayoutDimensions): LayoutDimensions {
+	return {
+		...layout,
+		content: {
+			...layout.content,
+			width: layout.content.width - 2,
+			height: layout.content.height - 2,
+		},
+	};
+}
 
 export class ContentWindow {
 	private renderer: CliRenderer;
 	private store: Store;
-	private container: BoxRenderable;
-	private titleText: TextRenderable | null = null;
 	private layout: LayoutDimensions;
+	private container: BoxRenderable;
+	private torrentTable: TorrentTable;
 
 	constructor(renderer: CliRenderer, store: Store, layout: LayoutDimensions) {
 		this.renderer = renderer;
 		this.store = store;
 		this.layout = layout;
+		this.torrentTable = new TorrentTable(renderer, innerLayout(layout));
 		this.container = this.build();
 		this.renderer.root.add(this.container);
 	}
 
-	update(): void {
+	update(focusArea: "sidebar" | "table"): void {
 		const state = this.store.getState();
-		if (this.titleText) {
-			(this.titleText as unknown as { content: string }).content =
-				state.selectedView;
-		}
+		this.torrentTable.update(state.torrent, focusArea);
 	}
 
 	updateLayout(layout: LayoutDimensions): void {
 		this.layout = layout;
-		this.container.left = layout.content.x;
-		this.container.top = layout.content.y;
-		this.container.width = layout.content.width;
-		this.container.height = layout.content.height;
+		(this.container as unknown as { left: number }).left = layout.content.x;
+		(this.container as unknown as { top: number }).top = layout.content.y;
+		(this.container as unknown as { width: number }).width = layout.content.width;
+		(this.container as unknown as { height: number }).height = layout.content.height;
+		this.torrentTable.updateLayout(innerLayout(layout));
 	}
 
 	private build(): BoxRenderable {
 		const theme = getTheme();
-		const state = this.store.getState();
+		const layout = this.layout;
 
-		this.container = new BoxRenderable(this.renderer, {
+		const container = new BoxRenderable(this.renderer, {
 			position: "absolute",
-			left: this.layout.content.x,
-			top: this.layout.content.y,
-			width: this.layout.content.width,
-			height: this.layout.content.height,
+			left: layout.content.x,
+			top: layout.content.y,
+			width: layout.content.width,
+			height: layout.content.height,
 			border: true,
 			borderColor: theme.border,
 		});
 
-		const titleBox = new BoxRenderable(this.renderer, {
-			position: "absolute",
-			left: 0,
-			top: 0,
-			width: this.layout.content.width,
-			paddingY: 1,
-			paddingX: 1,
-		});
-
-		this.titleText = new TextRenderable(this.renderer, {
-			content: state.selectedView,
-			fg: theme.accent,
-		});
-		titleBox.add(this.titleText);
-		this.container.add(titleBox);
-
-		const contentText = new TextRenderable(this.renderer, {
-			content: "Welcome to torrent-tui",
-			fg: theme.fgPrimary,
-		});
-
-		const contentBox = new BoxRenderable(this.renderer, {
+		// Inner wrapper offset by 1 on each side to sit inside the border
+		const inner = new BoxRenderable(this.renderer, {
 			position: "absolute",
 			left: 1,
-			top: 4,
+			top: 1,
+			width: layout.content.width - 2,
+			height: layout.content.height - 2,
 		});
-		contentBox.add(contentText);
-		this.container.add(contentBox);
+		inner.add(this.torrentTable.getContainer());
+		container.add(inner);
 
-		return this.container;
+		return container;
 	}
 }

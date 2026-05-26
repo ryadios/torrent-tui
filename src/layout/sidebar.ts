@@ -1,6 +1,6 @@
 import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import { APP_NAME, SIDEBAR_ITEMS } from "../constants";
-import type { Store } from "../store";
+import type { AppState, Store } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
 
@@ -25,13 +25,13 @@ export class Sidebar {
 		this.renderer.root.add(this.container);
 	}
 
-	update(): void {
-		const state = this.store.getState();
+	update(state?: AppState): void {
+		const s = state ?? this.store.getState();
 		const theme = getTheme();
 
 		for (const item of this.itemTexts) {
-			const itemName = this.getItemName(item.globalIndex);
-			const isSelected = item.globalIndex === state.selectedIndex;
+			const itemName = SIDEBAR_ITEMS.status[item.globalIndex] ?? "";
+			const isSelected = item.globalIndex === s.selectedIndex;
 			(item.text as unknown as { content: string }).content =
 				`${isSelected ? "> " : "  "}${itemName}`;
 			(item.text as unknown as { fg: string }).fg = isSelected
@@ -77,7 +77,6 @@ export class Sidebar {
 		this.container.add(titleBox);
 
 		let yOffset = 3;
-		const _allItems = [...SIDEBAR_ITEMS.status, ...SIDEBAR_ITEMS.category];
 
 		const statusTitle = new BoxRenderable(this.renderer, {
 			position: "absolute",
@@ -93,8 +92,7 @@ export class Sidebar {
 		yOffset += 2;
 
 		for (let i = 0; i < SIDEBAR_ITEMS.status.length; i++) {
-			const globalIndex = i;
-			const isSelected = globalIndex === state.selectedIndex;
+			const isSelected = i === state.selectedIndex;
 			const itemName = SIDEBAR_ITEMS.status[i];
 
 			const itemBox = new BoxRenderable(this.renderer, {
@@ -110,55 +108,10 @@ export class Sidebar {
 
 			itemBox.add(text);
 			this.container.add(itemBox);
-			this.itemTexts.push({ text, globalIndex });
-			yOffset += 1;
-		}
-
-		yOffset += 1;
-
-		const categoryTitle = new BoxRenderable(this.renderer, {
-			position: "absolute",
-			left: 1,
-			top: yOffset,
-		});
-		const categoryTitleText = new TextRenderable(this.renderer, {
-			content: "Category",
-			fg: theme.fgMuted,
-		});
-		categoryTitle.add(categoryTitleText);
-		this.container.add(categoryTitle);
-		yOffset += 2;
-
-		for (let i = 0; i < SIDEBAR_ITEMS.category.length; i++) {
-			const globalIndex = SIDEBAR_ITEMS.status.length + i;
-			const isSelected = globalIndex === state.selectedIndex;
-			const itemName = SIDEBAR_ITEMS.category[i];
-
-			const itemBox = new BoxRenderable(this.renderer, {
-				position: "absolute",
-				left: 1,
-				top: yOffset,
-			});
-
-			const text = new TextRenderable(this.renderer, {
-				content: `${isSelected ? "> " : "  "}${itemName}`,
-				fg: isSelected ? theme.accent : theme.fgPrimary,
-			});
-
-			itemBox.add(text);
-			this.container.add(itemBox);
-			this.itemTexts.push({ text, globalIndex });
+			this.itemTexts.push({ text, globalIndex: i });
 			yOffset += 1;
 		}
 
 		return this.container;
-	}
-
-	private getItemName(globalIndex: number): string {
-		const statusLen = SIDEBAR_ITEMS.status.length;
-		if (globalIndex < statusLen) {
-			return SIDEBAR_ITEMS.status[globalIndex] ?? "";
-		}
-		return SIDEBAR_ITEMS.category[globalIndex - statusLen] ?? "";
 	}
 }

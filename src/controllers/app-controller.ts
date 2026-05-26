@@ -5,12 +5,22 @@ import type { Sidebar } from "../layout/sidebar";
 import type { ToastManager } from "../layout/toast-manager";
 import type { Store } from "../store";
 
+type FocusMode = "global" | "dialog";
+type FocusArea = "sidebar" | "table";
+
 export class AppController {
 	private renderer: CliRenderer;
 	private store: Store;
 	private sidebar: Sidebar;
 	private contentWindow: ContentWindow;
 	private toastManager: ToastManager;
+	focusMode: FocusMode = "global";
+	focusArea: FocusArea = "sidebar";
+
+	// Callbacks wired by App after bridge/dialog are created
+	onAddTorrent?: () => void;
+	onQuit?: () => void;
+	onDialogClose?: () => void;
 
 	constructor(
 		renderer: CliRenderer,
@@ -27,45 +37,67 @@ export class AppController {
 	}
 
 	start(): void {
-		this.store.subscribe(() => {
-			this.sidebar.update();
-			this.contentWindow.update();
+		this.store.subscribe((state) => {
+			this.sidebar.update(state);
+			this.contentWindow.update(this.focusArea);
 		});
 
 		this.renderer.keyInput.on("keypress", (key) => {
 			this.handleKeyPress(key);
 		});
+
+		// Force initial render so components reflect the empty state correctly
+		this.refreshView();
+	}
+
+	private refreshView(): void {
+		const state = this.store.getState();
+		this.sidebar.update(state);
+		this.contentWindow.update(this.focusArea);
 	}
 
 	private handleKeyPress(key: KeyEvent): void {
+		// Dialog mode: only Esc reaches global handler
+		if (this.focusMode === "dialog") {
+			if (key.name === "escape") {
+				this.focusMode = "global";
+				this.onDialogClose?.();
+			}
+			return;
+		}
+
 		if (this.toastManager.handleInput(key.name)) {
 			return;
 		}
 
-		const totalItems =
-			SIDEBAR_ITEMS.status.length + SIDEBAR_ITEMS.category.length;
-		const state = this.store.getState();
+		// Tab toggles focus between sidebar and table
+		if (key.name === "tab") {
+			this.focusArea = this.focusArea === "sidebar" ? "table" : "sidebar";
+			this.refreshView();
+			return;
+		}
 
 		if (key.name === "j" || key.name === "down") {
-			const nextIndex = (state.selectedIndex + 1) % totalItems;
-			this.store.setState({
-				selectedIndex: nextIndex,
-				selectedView: this.getViewName(nextIndex),
-			});
+			if (this.focusArea === "sidebar") {
+				const total = SIDEBAR_ITEMS.status.length;
+				const state = this.store.getState();
+				const next = (state.selectedIndex + 1) % total;
+				this.store.setState({ selectedIndex: next, selectedView: SIDEBAR_ITEMS.status[next] ?? "All" });
+			}
+			// Table mode: no-op for single-torrent MVP
 		} else if (key.name === "k" || key.name === "up") {
-			const prevIndex = (state.selectedIndex - 1 + totalItems) % totalItems;
-			this.store.setState({
-				selectedIndex: prevIndex,
-				selectedView: this.getViewName(prevIndex),
-			});
+			if (this.focusArea === "sidebar") {
+				const total = SIDEBAR_ITEMS.status.length;
+				const state = this.store.getState();
+				const prev = (state.selectedIndex - 1 + total) % total;
+				this.store.setState({ selectedIndex: prev, selectedView: SIDEBAR_ITEMS.status[prev] ?? "All" });
+			}
+			// Table mode: no-op for single-torrent MVP
+		} else if (key.name === "a") {
+			this.focusMode = "dialog";
+			this.onAddTorrent?.();
+		} else if (key.name === "q") {
+			this.onQuit?.();
 		}
-	}
-
-	private getViewName(globalIndex: number): string {
-		const statusLen = SIDEBAR_ITEMS.status.length;
-		if (globalIndex < statusLen) {
-			return SIDEBAR_ITEMS.status[globalIndex] ?? "All";
-		}
-		return SIDEBAR_ITEMS.category[globalIndex - statusLen] ?? "All";
 	}
 }

@@ -28,7 +28,8 @@ async function loadTorrent(torrentPath: string) {
 	const { loadConfig } = await import("./config/index");
 
 	const config = loadConfig();
-	const downloadPath = config.downloadPath.replace("~", process.env["HOME"] ?? ".");
+	const { resolvePath } = await import("./utils/paths");
+	const downloadPath = resolvePath(config.downloadPath);
 	const raw = new Uint8Array(readFileSync(torrentPath));
 	const decoded = decode(raw);
 

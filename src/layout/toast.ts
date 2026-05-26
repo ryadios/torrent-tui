@@ -30,6 +30,7 @@ export class Toast {
 	private dismissed: boolean = false;
 	private addedToRenderer: boolean = false;
 
+	private layout: LayoutDimensions;
 	private container: BoxRenderable;
 	private titleLabel: TextRenderable;
 	private messageLabel: TextRenderable;
@@ -125,7 +126,7 @@ export class Toast {
 			height: this.height,
 			borderColor: this.getBorderColor(),
 			borderStyle: "single",
-			backgroundColor: theme.bgSecondary,
+			backgroundColor: theme.bgPrimary,
 		});
 	}
 

@@ -1,6 +1,22 @@
+export interface TorrentState {
+	id: string;
+	name: string;
+	totalSize: number;
+	downloadedPieces: number;
+	totalPieces: number;
+	status: "verifying" | "downloading" | "seeding" | "stopped" | "error";
+	downloadBps: number;
+	uploadBps: number;
+	peers: number;
+	etaSeconds: number | null;
+}
+
 export interface AppState {
 	selectedIndex: number;
 	selectedView: string;
+	torrent: TorrentState | null;
+	totalDownloadBps: number;
+	totalUploadBps: number;
 }
 
 type Listener = (state: AppState) => void;
