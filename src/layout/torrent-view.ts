@@ -3,10 +3,10 @@ import type { TorrentState } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
 
-const PREFIX_W = 2;   // left margin
-const SUFFIX_W = 3;   // right margin (matching left for symmetry)
+const PREFIX_W = 2;
+const SUFFIX_W = 3;
 const SIZE_W   = 9;
-const SEP_W    = 2;   // space between Size and Status
+const SEP_W    = 2;
 const STATUS_W = 13;
 const DL_W     = 12;
 const UL_W     = 12;
@@ -35,8 +35,8 @@ function rightGroup(size: string, status: string, dl: string, ul: string, eta: s
 	);
 }
 
-function buildRow(left: string, nameWidth: number, gap: number, right: string): string {
-	return "  " + left.padEnd(nameWidth) + " ".repeat(gap) + right;
+function buildRow(left: string, nameWidth: number, gap: number, right: string, prefix = "  "): string {
+	return prefix + left.padEnd(nameWidth) + " ".repeat(gap) + right;
 }
 
 function truncate(s: string, max: number): string {
@@ -77,78 +77,51 @@ function setBg(node: BoxRenderable, bg: string | undefined): void {
 	(node as unknown as { backgroundColor: string | undefined }).backgroundColor = bg;
 }
 
+interface TorrentRow {
+	metaRow:    BoxRenderable;
+	metaText:   TextRenderable;
+	barRow:     BoxRenderable;
+	filledText: TextRenderable;
+	emptyText:  TextRenderable;
+}
+
 export class TorrentTable {
 	private renderer: CliRenderer;
 	private layout: LayoutDimensions;
 	private widths: ReturnType<typeof calcWidths>;
+	private container:  BoxRenderable;
+	private headerText: TextRenderable;
+	private rows: TorrentRow[] = [];
 
-	private container:    BoxRenderable;
-	private headerText:   TextRenderable;
-	private metaRow:      BoxRenderable;
-	private metaText:     TextRenderable;
-	private barRow:       BoxRenderable;
-	// Bar: prefix + filled share the same TextRenderable to guarantee x-alignment
-	private filledText:   TextRenderable; // content = "  " + "━"×filled
-	private emptyText:    TextRenderable; // content = "━"×empty + trailing spaces
-	private setLeft: (n: number) => void = () => {};
+	private lastTorrents: TorrentState[] = [];
+	private lastSelectedIndex = 0;
+	private lastFocusArea: "sidebar" | "table" = "sidebar";
 
 	constructor(renderer: CliRenderer, layout: LayoutDimensions) {
 		this.renderer = renderer;
 		this.layout = layout;
 		this.widths = calcWidths(layout.content.width);
-		const built = this.build(layout.content.width);
+		const built = this.buildShell(layout.content.width);
 		this.container  = built.container;
 		this.headerText = built.headerText;
-		this.metaRow    = built.metaRow;
-		this.metaText   = built.metaText;
-		this.barRow     = built.barRow;
-		this.filledText = built.filledText;
-		this.emptyText  = built.emptyText;
 	}
 
 	getContainer(): BoxRenderable {
 		return this.container;
 	}
 
-	update(torrent: TorrentState | null, focusArea: "sidebar" | "table"): void {
-		const theme = getTheme();
-		const { nameWidth, gap } = this.widths;
-		const trailingW = gap + RIGHT_W;
+	update(torrents: TorrentState[], selectedIndex: number, focusArea: "sidebar" | "table"): void {
+		this.lastTorrents = torrents;
+		this.lastSelectedIndex = selectedIndex;
+		this.lastFocusArea = focusArea;
 
-		if (!torrent) {
-			setBg(this.metaRow, undefined);
-			setBg(this.barRow, undefined);
-			setText(this.metaText, buildRow(" ".repeat(nameWidth), nameWidth, gap, " ".repeat(RIGHT_W)));
-			// Prefix embedded in filledText so bar starts at same x as name text
-			setText(this.filledText, "  ");
-			setText(this.emptyText, " ".repeat(nameWidth + trailingW));
-			return;
+		if (torrents.length !== this.rows.length) {
+			this.rebuildRows(torrents.length);
 		}
 
-		const pct = torrent.totalPieces > 0
-			? Math.floor((torrent.downloadedPieces / torrent.totalPieces) * 100)
-			: 0;
-		const filledLen = Math.round((pct / 100) * nameWidth);
-		const emptyLen  = nameWidth - filledLen;
-		const barColor  = torrent.status === "seeding" ? theme.success : theme.accent;
-		const bg        = focusArea === "table" ? theme.bgSecondary : undefined;
-
-		setBg(this.metaRow, bg);
-		setBg(this.barRow, bg);
-
-		const name   = truncate(torrent.name, nameWidth);
-		const status = torrent.status.charAt(0).toUpperCase() + torrent.status.slice(1);
-		const dl     = torrent.downloadBps > 0 ? `↓ ${formatSpeed(torrent.downloadBps)}` : "";
-		const ul     = torrent.uploadBps   > 0 ? `↑ ${formatSpeed(torrent.uploadBps)}`   : "";
-
-		setText(this.metaText, buildRow(name, nameWidth, gap, rightGroup(
-			formatBytes(torrent.totalSize), status, dl, ul, formatEta(torrent.etaSeconds), `${pct}%`,
-		)));
-
-		// "  " prefix embedded so filledText starts at same column as name
-		setText(this.filledText, "  " + "━".repeat(Math.max(0, filledLen)));
-		setFg(this.filledText, barColor);
-		setText(this.emptyText, "━".repeat(Math.max(0, emptyLen)) + " ".repeat(trailingW));
+		for (let i = 0; i < torrents.length; i++) {
+			this.updateRow(this.rows[i]!, torrents[i]!, i === selectedIndex && focusArea === "table");
+		}
 	}
 
 	updateLayout(layout: LayoutDimensions): void {
@@ -156,21 +129,103 @@ export class TorrentTable {
 		this.widths = calcWidths(layout.content.width);
 		(this.container as unknown as { width: number }).width = layout.content.width;
 		const { nameWidth, gap } = this.widths;
-		setText(this.headerText, buildRow("Name", nameWidth, gap, rightGroup("Size", "Status", "↓ Speed", "↑ Speed", "ETA", "%")));
+		setText(
+			this.headerText,
+			buildRow("Name", nameWidth, gap, rightGroup("Size", "Status", "↓ Speed", "↑ Speed", "ETA", "%")),
+		);
+		this.update(this.lastTorrents, this.lastSelectedIndex, this.lastFocusArea);
 	}
 
-	private build(cw: number): {
-		container:  BoxRenderable;
-		headerText: TextRenderable;
-		metaRow:    BoxRenderable;
-		metaText:   TextRenderable;
-		barRow:     BoxRenderable;
-		filledText: TextRenderable;
-		emptyText:  TextRenderable;
-	} {
+	private rebuildRows(count: number): void {
+		for (const row of this.rows) {
+			row.metaRow.destroy();
+			row.barRow.destroy();
+		}
+		this.rows = [];
+		for (let i = 0; i < count; i++) {
+			const row = this.createRow();
+			this.container.add(row.metaRow);
+			this.container.add(row.barRow);
+			this.rows.push(row);
+		}
+	}
+
+	private createRow(): TorrentRow {
 		const theme = getTheme();
 		const { nameWidth, gap } = this.widths;
 		const trailingW = gap + RIGHT_W;
+		const cw = this.layout.content.width;
+
+		const metaRow = new BoxRenderable(this.renderer, { width: cw, height: 1 });
+		const metaText = new TextRenderable(this.renderer, {
+			content: buildRow(" ".repeat(nameWidth), nameWidth, gap, " ".repeat(RIGHT_W)),
+			fg: theme.fgPrimary,
+		});
+		metaRow.add(metaText);
+
+		const barRow = new BoxRenderable(this.renderer, {
+			width: cw,
+			height: 1,
+			flexDirection: "row",
+		});
+		const filledText = new TextRenderable(this.renderer, {
+			content: "  ",
+			fg: theme.accent,
+		});
+		const emptyText = new TextRenderable(this.renderer, {
+			content: " ".repeat(nameWidth + trailingW),
+			fg: theme.fgMuted,
+		});
+		barRow.add(filledText);
+		barRow.add(emptyText);
+
+		return { metaRow, metaText, barRow, filledText, emptyText };
+	}
+
+	private updateRow(row: TorrentRow, torrent: TorrentState, isSelected: boolean): void {
+		const theme = getTheme();
+		const { nameWidth, gap } = this.widths;
+		const trailingW = gap + RIGHT_W;
+
+		const pct = torrent.totalPieces > 0
+			? Math.floor((torrent.downloadedPieces / torrent.totalPieces) * 100)
+			: 0;
+		const filledLen = Math.round((pct / 100) * nameWidth);
+		const emptyLen  = nameWidth - filledLen;
+
+		const barColor = (() => {
+			switch (torrent.status) {
+				case "seeding":   return theme.success;
+				case "paused":    return theme.warning;
+				case "stopped":   return theme.fgSecondary;
+				case "error":     return theme.error;
+				default:          return theme.accent;
+			}
+		})();
+
+		// No background color — use text prefix + color to match sidebar pattern
+		setBg(row.metaRow, undefined);
+		setBg(row.barRow, undefined);
+
+		const prefix = isSelected ? "> " : "  ";
+		const name   = truncate(torrent.name, nameWidth);
+		const status = torrent.status.charAt(0).toUpperCase() + torrent.status.slice(1);
+		const dl     = torrent.downloadBps > 0 ? `↓ ${formatSpeed(torrent.downloadBps)}` : "";
+		const ul     = torrent.uploadBps   > 0 ? `↑ ${formatSpeed(torrent.uploadBps)}`   : "";
+
+		setText(row.metaText, buildRow(name, nameWidth, gap, rightGroup(
+			formatBytes(torrent.totalSize), status, dl, ul, formatEta(torrent.etaSeconds), `${pct}%`,
+		), prefix));
+		setFg(row.metaText, isSelected ? theme.accent : theme.fgPrimary);
+
+		setText(row.filledText, "  " + "━".repeat(Math.max(0, filledLen)));
+		setFg(row.filledText, barColor);
+		setText(row.emptyText, "━".repeat(Math.max(0, emptyLen)) + " ".repeat(trailingW));
+	}
+
+	private buildShell(cw: number): { container: BoxRenderable; headerText: TextRenderable } {
+		const theme = getTheme();
+		const { nameWidth, gap } = this.widths;
 
 		const container = new BoxRenderable(this.renderer, {
 			position: "absolute",
@@ -182,42 +237,14 @@ export class TorrentTable {
 
 		const headerText = new TextRenderable(this.renderer, {
 			content: buildRow("Name", nameWidth, gap, rightGroup("Size", "Status", "↓ Speed", "↑ Speed", "ETA", "%")),
-			fg: theme.fgSecondary,
-		});
-
-		// One blank line between header and first data row
-		const spacer = new TextRenderable(this.renderer, { content: "" });
-
-		const metaRow = new BoxRenderable(this.renderer, { width: cw, height: 1 });
-		const metaText = new TextRenderable(this.renderer, {
-			content: buildRow(" ".repeat(nameWidth), nameWidth, gap, " ".repeat(RIGHT_W)),
 			fg: theme.fgPrimary,
 		});
-		metaRow.add(metaText);
 
-		// Bar row: two TextRenderables only (no separate prefix element)
-		// filledText starts with "  " so its x-position matches the name above it
-		const barRow = new BoxRenderable(this.renderer, {
-			width: cw,
-			height: 1,
-			flexDirection: "row",
-		});
-		const filledText = new TextRenderable(this.renderer, {
-			content: "  ",   // "  " prefix + 0 bars when idle
-			fg: theme.accent,
-		});
-		const emptyText = new TextRenderable(this.renderer, {
-			content: " ".repeat(nameWidth + trailingW),
-			fg: theme.fgMuted,
-		});
-		barRow.add(filledText);
-		barRow.add(emptyText);
+		const spacer = new TextRenderable(this.renderer, { content: "" });
 
 		container.add(headerText);
 		container.add(spacer);
-		container.add(metaRow);
-		container.add(barRow);
 
-		return { container, headerText, metaRow, metaText, barRow, filledText, emptyText };
+		return { container, headerText };
 	}
 }

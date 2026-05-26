@@ -4,7 +4,7 @@ export interface TorrentState {
 	totalSize: number;
 	downloadedPieces: number;
 	totalPieces: number;
-	status: "verifying" | "downloading" | "seeding" | "stopped" | "error";
+	status: "verifying" | "downloading" | "paused" | "seeding" | "stopped" | "error";
 	downloadBps: number;
 	uploadBps: number;
 	peers: number;
@@ -14,7 +14,7 @@ export interface TorrentState {
 export interface AppState {
 	selectedIndex: number;
 	selectedView: string;
-	torrent: TorrentState | null;
+	torrents: TorrentState[];
 	totalDownloadBps: number;
 	totalUploadBps: number;
 }

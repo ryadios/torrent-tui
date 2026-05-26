@@ -22,6 +22,7 @@ interface InProgressPiece {
 
 export class Downloader extends EventEmitter {
 	private stopped = false;
+	private paused = false;
 	private inProgress = new Map<number, InProgressPiece>();
 	private pendingRequests = new Map<string, Set<string>>(); // peerKey → "idx:begin"
 	private corruptStrikes = new Map<string, number>();
@@ -92,6 +93,22 @@ export class Downloader extends EventEmitter {
 		}
 	}
 
+	pause(): void {
+		if (this.stopped) return;
+		this.paused = true;
+		if (this.progressInterval) clearInterval(this.progressInterval);
+		this.progressInterval = null;
+	}
+
+	resume(): void {
+		if (this.stopped || !this.paused) return;
+		this.paused = false;
+		this.progressInterval = setInterval(() => this.logProgress(), 2_000);
+		for (const conn of this.manager.connections.values()) {
+			if (!conn.amChoked) this.fillPipeline(conn);
+		}
+	}
+
 	private wirePeer(conn: PeerConnection): void {
 		const key = `${conn.address}:${conn.port}`;
 		if (this.bannedPeers.has(key)) return;
@@ -136,7 +153,7 @@ export class Downloader extends EventEmitter {
 	}
 
 	private fillPipeline(conn: PeerConnection): void {
-		if (this.stopped) return;
+		if (this.stopped || this.paused) return;
 		const key = `${conn.address}:${conn.port}`;
 		if (this.bannedPeers.has(key)) return;
 
@@ -365,10 +382,12 @@ export class Downloader extends EventEmitter {
 				log("resume", "download path changed — starting fresh");
 				return;
 			}
-			for (const i of data.downloadedPieces) this.storage.markPiece(i);
-			const n = data.downloadedPieces.length;
-			log("resume", `${n} / ${this.metadata.pieceCount} pieces restored`);
-			this.fileLog(`resume loaded: ${n} pieces`);
+			// Only count pieces that verifyAll() already confirmed are on disk.
+			// Do not call markPiece() here — verifyAll() is the authoritative source.
+			// Marking stale resume entries would corrupt the download when files were deleted.
+			const confirmed = data.downloadedPieces.filter((i) => this.storage.hasPiece(i)).length;
+			log("resume", `${confirmed} / ${data.downloadedPieces.length} resume pieces confirmed on disk`);
+			this.fileLog(`resume: ${confirmed} / ${data.downloadedPieces.length} pieces on disk`);
 		} catch {
 			log("resume", "could not read save file — starting fresh");
 		}

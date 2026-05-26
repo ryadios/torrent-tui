@@ -30,14 +30,15 @@ export class StatusBar {
 		const theme = getTheme();
 		const dl = formatSpeed(state.totalDownloadBps);
 		const ul = formatSpeed(state.totalUploadBps);
-		const status = state.torrent ? state.torrent.status : "idle";
+		const count = state.torrents.length;
+		const status = count === 0 ? "idle" : `${count} torrent${count !== 1 ? "s" : ""}`;
 
 		(this.leftText as unknown as { content: string }).content =
 			` ↓ ${dl}  ↑ ${ul}  |  ${status}`;
 		(this.leftText as unknown as { fg: string }).fg = theme.fgPrimary;
 
 		(this.rightText as unknown as { content: string }).content =
-			"j/k nav  a add  q quit ";
+			"Tab focus  Space pause  d del  D del+files  a add  q quit ";
 		(this.rightText as unknown as { fg: string }).fg = theme.fgMuted;
 	}
 

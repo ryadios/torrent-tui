@@ -1,9 +1,11 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { SIDEBAR_ITEMS } from "../constants";
+import type { ConfirmDialog } from "../layout/confirm-dialog";
 import type { ContentWindow } from "../layout/content-window";
 import type { Sidebar } from "../layout/sidebar";
 import type { ToastManager } from "../layout/toast-manager";
 import type { Store } from "../store";
+import { filterTorrents } from "../utils/filter";
 
 type FocusMode = "global" | "dialog";
 type FocusArea = "sidebar" | "table";
@@ -16,11 +18,34 @@ export class AppController {
 	private toastManager: ToastManager;
 	focusMode: FocusMode = "global";
 	focusArea: FocusArea = "sidebar";
+	private tableSelectedIndex = 0;
+	private pendingDeleteId: string | null = null;
 
-	// Callbacks wired by App after bridge/dialog are created
+	// Injected by App after bridge/dialog are created
 	onAddTorrent?: () => void;
 	onQuit?: () => void;
 	onDialogClose?: () => void;
+	onDialogInput?: (key: string) => boolean;
+	onPauseTorrent?: (id: string) => void;
+	onResumeTorrent?: (id: string) => void;
+	onStartTorrent?: (id: string) => void;
+	onRemoveTorrent?: (id: string, deleteFiles: boolean) => void;
+
+	private _confirmDialog: ConfirmDialog | null = null;
+	set confirmDialog(dialog: ConfirmDialog) {
+		this._confirmDialog = dialog;
+		dialog.onConfirm = () => {
+			this.focusMode = "global";
+			if (this.pendingDeleteId) {
+				this.onRemoveTorrent?.(this.pendingDeleteId, true);
+				this.pendingDeleteId = null;
+			}
+		};
+		dialog.onCancel = () => {
+			this.focusMode = "global";
+			this.pendingDeleteId = null;
+		};
+	}
 
 	constructor(
 		renderer: CliRenderer,
@@ -38,30 +63,45 @@ export class AppController {
 
 	start(): void {
 		this.store.subscribe((state) => {
-			this.sidebar.update(state);
-			this.contentWindow.update(this.focusArea);
+			const len = filterTorrents(state.torrents, state.selectedView).length;
+			if (len > 0 && this.tableSelectedIndex >= len) {
+				this.tableSelectedIndex = len - 1;
+			} else if (len === 0) {
+				this.tableSelectedIndex = 0;
+			}
+			this.sidebar.update(state, this.focusArea);
+			this.contentWindow.update(this.focusArea, this.tableSelectedIndex);
 		});
 
 		this.renderer.keyInput.on("keypress", (key) => {
 			this.handleKeyPress(key);
 		});
 
-		// Force initial render so components reflect the empty state correctly
 		this.refreshView();
 	}
 
 	private refreshView(): void {
 		const state = this.store.getState();
-		this.sidebar.update(state);
-		this.contentWindow.update(this.focusArea);
+		this.sidebar.update(state, this.focusArea);
+		this.contentWindow.update(this.focusArea, this.tableSelectedIndex);
+	}
+
+	private getSelectedId(): string | null {
+		const state = this.store.getState();
+		return filterTorrents(state.torrents, state.selectedView)[this.tableSelectedIndex]?.id ?? null;
 	}
 
 	private handleKeyPress(key: KeyEvent): void {
-		// Dialog mode: only Esc reaches global handler
 		if (this.focusMode === "dialog") {
-			if (key.name === "escape") {
-				this.focusMode = "global";
-				this.onDialogClose?.();
+			if (this._confirmDialog?.getIsOpen()) {
+				this._confirmDialog.handleInput(key.name);
+			} else {
+				if (key.name === "escape") {
+					this.focusMode = "global";
+					this.onDialogClose?.();
+				} else {
+					this.onDialogInput?.(key.name);
+				}
 			}
 			return;
 		}
@@ -70,7 +110,6 @@ export class AppController {
 			return;
 		}
 
-		// Tab toggles focus between sidebar and table
 		if (key.name === "tab") {
 			this.focusArea = this.focusArea === "sidebar" ? "table" : "sidebar";
 			this.refreshView();
@@ -83,16 +122,54 @@ export class AppController {
 				const state = this.store.getState();
 				const next = (state.selectedIndex + 1) % total;
 				this.store.setState({ selectedIndex: next, selectedView: SIDEBAR_ITEMS.status[next] ?? "All" });
+			} else {
+				const state = this.store.getState();
+				const len = filterTorrents(state.torrents, state.selectedView).length;
+				if (len > 0) {
+					this.tableSelectedIndex = Math.min(this.tableSelectedIndex + 1, len - 1);
+					this.refreshView();
+				}
 			}
-			// Table mode: no-op for single-torrent MVP
 		} else if (key.name === "k" || key.name === "up") {
 			if (this.focusArea === "sidebar") {
 				const total = SIDEBAR_ITEMS.status.length;
 				const state = this.store.getState();
 				const prev = (state.selectedIndex - 1 + total) % total;
 				this.store.setState({ selectedIndex: prev, selectedView: SIDEBAR_ITEMS.status[prev] ?? "All" });
+			} else {
+				if (this.tableSelectedIndex > 0) {
+					this.tableSelectedIndex--;
+					this.refreshView();
+				}
 			}
-			// Table mode: no-op for single-torrent MVP
+		} else if (key.name === "space") {
+			if (this.focusArea === "table") {
+				const id = this.getSelectedId();
+				if (!id) return;
+				const state = this.store.getState();
+				const torrent = filterTorrents(state.torrents, state.selectedView)[this.tableSelectedIndex];
+				if (!torrent) return;
+				if (torrent.status === "downloading") {
+					this.onPauseTorrent?.(id);
+				} else if (torrent.status === "paused") {
+					this.onResumeTorrent?.(id);
+				} else if (torrent.status === "stopped") {
+					this.onStartTorrent?.(id);
+				}
+			}
+		} else if (key.name === "d" && !key.shift) {
+			if (this.focusArea === "table") {
+				const id = this.getSelectedId();
+				if (id) this.onRemoveTorrent?.(id, false);
+			}
+		} else if (key.name === "d" && key.shift) {
+			if (this.focusArea === "table") {
+				const id = this.getSelectedId();
+				if (!id) return;
+				this.pendingDeleteId = id;
+				this.focusMode = "dialog";
+				this._confirmDialog?.open("Delete torrent and files?");
+			}
 		} else if (key.name === "a") {
 			this.focusMode = "dialog";
 			this.onAddTorrent?.();

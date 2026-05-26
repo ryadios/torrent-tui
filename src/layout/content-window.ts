@@ -2,6 +2,7 @@ import { BoxRenderable, type CliRenderer } from "@opentui/core";
 import type { Store } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
+import { filterTorrents } from "../utils/filter";
 import { TorrentTable } from "./torrent-view";
 
 function innerLayout(layout: LayoutDimensions): LayoutDimensions {
@@ -31,9 +32,13 @@ export class ContentWindow {
 		this.renderer.root.add(this.container);
 	}
 
-	update(focusArea: "sidebar" | "table"): void {
+	update(focusArea: "sidebar" | "table", selectedIndex: number): void {
+		const theme = getTheme();
 		const state = this.store.getState();
-		this.torrentTable.update(state.torrent, focusArea);
+		(this.container as unknown as { borderColor: string }).borderColor =
+			focusArea === "table" ? theme.accent : theme.border;
+		const visible = filterTorrents(state.torrents, state.selectedView);
+		this.torrentTable.update(visible, selectedIndex, focusArea);
 	}
 
 	updateLayout(layout: LayoutDimensions): void {

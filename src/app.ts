@@ -2,6 +2,7 @@ import { type CliRenderer, createCliRenderer } from "@opentui/core";
 import { loadConfig } from "./config";
 import { AppController } from "./controllers/app-controller";
 import { AddTorrentDialog } from "./layout/add-torrent-dialog";
+import { ConfirmDialog } from "./layout/confirm-dialog";
 import { ContentWindow } from "./layout/content-window";
 import { Sidebar } from "./layout/sidebar";
 import { StatusBar } from "./layout/status-bar";
@@ -14,7 +15,7 @@ import { calculateLayout } from "./utils/layout";
 const INITIAL_STATE = {
 	selectedIndex: 0,
 	selectedView: "All",
-	torrent: null,
+	torrents: [],
 	totalDownloadBps: 0,
 	totalUploadBps: 0,
 };
@@ -29,6 +30,7 @@ export class App {
 	private controller!: AppController;
 	private bridge!: TorrentBridge;
 	private addDialog!: AddTorrentDialog;
+	private confirmDialog!: ConfirmDialog;
 	private layout!: LayoutDimensions;
 	private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -45,6 +47,7 @@ export class App {
 		this.statusBar = new StatusBar(this.renderer, this.layout);
 		this.toastManager = new ToastManager(this.renderer, this.layout);
 		this.addDialog = new AddTorrentDialog(this.renderer, this.layout, config.torrentFolder);
+		this.confirmDialog = new ConfirmDialog(this.renderer, this.layout);
 
 		this.controller = new AppController(
 			this.renderer,
@@ -53,6 +56,8 @@ export class App {
 			this.contentWindow,
 			this.toastManager,
 		);
+		// Wire ConfirmDialog — callbacks are set inside the controller setter
+		this.controller.confirmDialog = this.confirmDialog;
 
 		// Wire controller callbacks
 		this.controller.onAddTorrent = () => {
@@ -63,9 +68,29 @@ export class App {
 			this.addDialog.close();
 		};
 
+		this.controller.onDialogInput = (key) => {
+			return this.addDialog.handleInput(key);
+		};
+
 		this.controller.onQuit = async () => {
 			await this.bridge.stopAll();
 			process.exit(0);
+		};
+
+		this.controller.onPauseTorrent = (id) => {
+			this.bridge.pauseTorrent(id);
+		};
+
+		this.controller.onResumeTorrent = (id) => {
+			this.bridge.resumeTorrent(id);
+		};
+
+		this.controller.onStartTorrent = (id) => {
+			this.bridge.startTorrent(id);
+		};
+
+		this.controller.onRemoveTorrent = (id, deleteFiles) => {
+			this.bridge.removeTorrent(id, deleteFiles);
 		};
 
 		this.addDialog.onSelect = async (filePath) => {
@@ -79,7 +104,7 @@ export class App {
 			});
 
 			try {
-				await this.bridge.setTorrent(filePath);
+				await this.bridge.addTorrent(filePath);
 				this.toastManager.show({
 					id: `added-${Date.now()}`,
 					type: "success",
@@ -96,11 +121,11 @@ export class App {
 			}
 		};
 
-		// Subscribe store to update status bar
 		this.store.subscribe((state) => {
 			this.statusBar.update(state);
 		});
 
+		await this.bridge.restoreSession();
 		this.controller.start();
 
 		this.renderer.on("resize", (width: number, height: number) => {
@@ -118,6 +143,7 @@ export class App {
 			this.statusBar.updateLayout(this.layout);
 			this.toastManager.updateLayout(this.layout);
 			this.addDialog.updateLayout(this.layout);
+			this.confirmDialog.updateLayout(this.layout);
 		}, 100);
 	}
 }
