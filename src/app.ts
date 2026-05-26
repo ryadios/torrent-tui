@@ -43,10 +43,18 @@ export class App {
 		this.bridge = new TorrentBridge(this.store, config);
 
 		this.sidebar = new Sidebar(this.renderer, this.store, this.layout);
-		this.contentWindow = new ContentWindow(this.renderer, this.store, this.layout);
+		this.contentWindow = new ContentWindow(
+			this.renderer,
+			this.store,
+			this.layout,
+		);
 		this.statusBar = new StatusBar(this.renderer, this.layout);
 		this.toastManager = new ToastManager(this.renderer, this.layout);
-		this.addDialog = new AddTorrentDialog(this.renderer, this.layout, config.torrentFolder);
+		this.addDialog = new AddTorrentDialog(
+			this.renderer,
+			this.layout,
+			config.torrentFolder,
+		);
 		this.confirmDialog = new ConfirmDialog(this.renderer, this.layout);
 
 		this.controller = new AppController(
@@ -74,7 +82,7 @@ export class App {
 
 		this.controller.onQuit = async () => {
 			await this.bridge.stopAll();
-			process.exit(0);
+			this.renderer.destroy();
 		};
 
 		this.controller.onPauseTorrent = (id) => {

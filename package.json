@@ -1,20 +1,54 @@
 {
 	"name": "torrent-tui",
-	"module": "src/index.tsx",
+	"version": "0.0.1",
+	"description": "A Bun-powered terminal BitTorrent client.",
+	"module": "src/index.ts",
 	"type": "module",
-	"private": true,
+	"private": false,
+	"packageManager": "bun@1.2.21",
+	"bin": {
+		"torrent-tui": "bin/torrent-tui"
+	},
+	"files": [
+		"bin",
+		"src",
+		"README.md",
+		"LICENSE"
+	],
 	"scripts": {
 		"start": "bun src/index.ts",
 		"dev": "bun --watch src/index.ts",
 		"check": "bun src/index.ts --download",
+		"smoke": "bin/torrent-tui --help && bin/torrent-tui --version && if bin/torrent-tui nope.txt; then echo \"Expected invalid torrent path to fail\"; exit 1; fi",
 		"typecheck": "tsc --noEmit",
-		"check:fix": "biome check --write --unsafe"
+		"check:fix": "biome check --write --unsafe",
+		"release:check": "bun run typecheck && bun publish --dry-run"
+	},
+	"keywords": [
+		"bittorrent",
+		"torrent",
+		"tui",
+		"terminal",
+		"cli",
+		"bun",
+		"opentui"
+	],
+	"author": "Aditya",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ryadios/torrent-tui.git"
+	},
+	"bugs": {
+		"url": "https://github.com/ryadios/torrent-tui/issues"
+	},
+	"homepage": "https://github.com/ryadios/torrent-tui#readme",
+	"engines": {
+		"bun": ">=1.0.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.8",
-		"@types/bun": "latest"
-	},
-	"peerDependencies": {
+		"@types/bun": "latest",
 		"typescript": "^5"
 	},
 	"dependencies": {

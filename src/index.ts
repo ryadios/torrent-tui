@@ -1,10 +1,31 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { VERSION } from "./constants";
 import { getPeers } from "./torrent/get_peers";
+
+class CliExit extends Error {}
 
 function fail(msg: string): never {
 	console.error(msg);
-	process.exit(1);
+	process.exitCode = 1;
+	throw new CliExit();
+}
+
+function printHelp(): void {
+	console.log(`torrent-tui ${VERSION}
+
+Usage:
+  torrent-tui                         Start the terminal UI
+  torrent-tui <file.torrent>          Announce and print peers
+  torrent-tui <file.torrent> --verify Verify local pieces and trackers
+  torrent-tui <file.torrent> --handshake
+                                      Connect to peers and print handshake summary
+  torrent-tui <file.torrent> --download
+                                      Download from the command line
+
+Options:
+  --help, -h                          Show this help
+  --version, -v                       Print the version`);
 }
 
 function validateTorrentArg(arg: string): string {
@@ -33,7 +54,12 @@ async function loadTorrent(torrentPath: string) {
 	const raw = new Uint8Array(readFileSync(torrentPath));
 	const decoded = decode(raw);
 
-	if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded) || decoded instanceof Uint8Array) {
+	if (
+		typeof decoded !== "object" ||
+		decoded === null ||
+		Array.isArray(decoded) ||
+		decoded instanceof Uint8Array
+	) {
 		fail("Invalid torrent file");
 	}
 
@@ -58,7 +84,7 @@ async function runVerify(torrentPath: string): Promise<void> {
 
 	let valid = 0;
 	let missing = 0;
-	let corrupt = 0;
+	const corrupt = 0;
 	for (let i = 0; i < metadata.pieceCount; i++) {
 		if (session.storage.hasPiece(i)) valid++;
 		else missing++;
@@ -68,8 +94,14 @@ async function runVerify(torrentPath: string): Promise<void> {
 	sep();
 	console.log("  Verify Summary");
 	sep();
-	log("storage", `${metadata.files.map((f) => join(downloadPath, f.path)).join(", ")}`);
-	log("verify", `${valid} valid   ${missing} missing   ${corrupt} corrupt   (${metadata.pieceCount} total)`);
+	log(
+		"storage",
+		`${metadata.files.map((f) => join(downloadPath, f.path)).join(", ")}`,
+	);
+	log(
+		"verify",
+		`${valid} valid   ${missing} missing   ${corrupt} corrupt   (${metadata.pieceCount} total)`,
+	);
 	log("tracker", `${peers.length} peers`);
 	console.log("");
 	for (const file of metadata.files) {
@@ -119,19 +151,25 @@ async function runHandshake(torrentPath: string): Promise<void> {
 	console.log("  Connection Summary");
 	console.log(line);
 	console.log(`  attempted    ${peers.length}`);
-	console.log(`  connected    ${connected.length}    unchoked ${unchoked.length}    failed ${failed}`);
+	console.log(
+		`  connected    ${connected.length}    unchoked ${unchoked.length}    failed ${failed}`,
+	);
 
 	if (connected.length > 0) {
 		const AW = 46; // address column width (fits longest IPv6+port)
 		const CW = 10; // client ID column
 		const PW = 13; // pieces column
 		console.log("");
-		console.log(`  ${"address".padEnd(AW)}  ${"client".padEnd(CW)}  ${"pieces".padEnd(PW)}  choked`);
+		console.log(
+			`  ${"address".padEnd(AW)}  ${"client".padEnd(CW)}  ${"pieces".padEnd(PW)}  choked`,
+		);
 		console.log(`  ${"-".repeat(W - 2)}`);
 		for (const c of connected) {
 			const addr = `${c.address}:${c.port}`.padEnd(AW);
 			const client = c.peerId.slice(0, 8).padEnd(CW);
-			const pieces = `${c.countPiecesPublic()}/${metadata.pieceCount}`.padEnd(PW);
+			const pieces = `${c.countPiecesPublic()}/${metadata.pieceCount}`.padEnd(
+				PW,
+			);
 			const choked = c.amChoked ? "yes" : "no";
 			console.log(`  ${addr}  ${client}  ${pieces}  ${choked}`);
 		}
@@ -194,7 +232,9 @@ async function runDownload(torrentPath: string): Promise<void> {
 	console.log("  Download Summary");
 	console.log(line);
 	console.log(`  torrent      ${metadata.name}`);
-	console.log(`  pieces       ${downloaded} / ${metadata.pieceCount} downloaded`);
+	console.log(
+		`  pieces       ${downloaded} / ${metadata.pieceCount} downloaded`,
+	);
 	console.log(`  status       ${session.status}`);
 
 	if (downloaded > 0) {
@@ -219,6 +259,17 @@ async function runDownload(torrentPath: string): Promise<void> {
 
 async function main() {
 	const args = process.argv.slice(2);
+
+	if (args.includes("--help") || args.includes("-h")) {
+		printHelp();
+		return;
+	}
+
+	if (args.includes("--version") || args.includes("-v")) {
+		console.log(VERSION);
+		return;
+	}
+
 	const torrentArg = args.find((a) => !a.startsWith("--"));
 	const isVerify = args.includes("--verify");
 	const isHandshake = args.includes("--handshake");
@@ -262,4 +313,8 @@ async function main() {
 	app.start();
 }
 
-main();
+main().catch((err: unknown) => {
+	if (err instanceof CliExit) return;
+	process.exitCode = 1;
+	console.error(`Error: ${err instanceof Error ? err.message : err}`);
+});

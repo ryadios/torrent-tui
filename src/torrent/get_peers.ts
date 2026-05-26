@@ -46,8 +46,26 @@ function parseCompactPeers(data: Uint8Array): PeerInfo[] {
 	}
 
 	for (let i = 0; i < data.length; i += peerSize) {
-		const ip = `${data[i]}.${data[i + 1]}.${data[i + 2]}.${data[i + 3]}`;
-		const port = (data[i + 4] << 8) | data[i + 5];
+		const first = data[i];
+		const second = data[i + 1];
+		const third = data[i + 2];
+		const fourth = data[i + 3];
+		const portHigh = data[i + 4];
+		const portLow = data[i + 5];
+
+		if (
+			first === undefined ||
+			second === undefined ||
+			third === undefined ||
+			fourth === undefined ||
+			portHigh === undefined ||
+			portLow === undefined
+		) {
+			throw new Error("Invalid compact peer data: truncated peer entry");
+		}
+
+		const ip = `${first}.${second}.${third}.${fourth}`;
+		const port = (portHigh << 8) | portLow;
 		peers.push({ ip, port });
 	}
 
@@ -84,7 +102,7 @@ export async function getPeers(
 	}
 
 	const infoEncoded = encode(info);
-	const infoHashBytes = SHA1.hash(infoEncoded);
+	const infoHashBytes = Uint8Array.from(SHA1.hash(infoEncoded) as Uint8Array);
 
 	let left: number;
 

@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish, without the leading v
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: ""
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate version
+        run: |
+          PACKAGE_VERSION="$(bun -e 'console.log((await import("./package.json")).default.version)')"
+          CONSTANT_VERSION="$(bun -e 'console.log((await import("./src/constants/index.ts")).VERSION)')"
+          if [ "$PACKAGE_VERSION" != "${{ inputs.version }}" ]; then
+            echo "package.json version $PACKAGE_VERSION does not match input ${{ inputs.version }}"
+            exit 1
+          fi
+          if [ "$CONSTANT_VERSION" != "${{ inputs.version }}" ]; then
+            echo "src/constants version $CONSTANT_VERSION does not match input ${{ inputs.version }}"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: CLI smoke
+        run: |
+          chmod +x bin/torrent-tui
+          bin/torrent-tui --help
+          bin/torrent-tui --version
+          if bin/torrent-tui nope.txt; then
+            echo "Expected invalid torrent path to fail"
+            exit 1
+          fi
+
+      - name: Package dry run
+        run: npm publish --dry-run
+
+      - name: Publish to npm
+        run: npm publish --access public
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --title "torrent-tui v${{ inputs.version }}" \
+            --notes "Published torrent-tui v${{ inputs.version }}.
+
+Install:
+\`\`\`bash
+bunx torrent-tui@${{ inputs.version }}
+\`\`\`
+
+Requires Bun. Standalone binaries are not included in this release." \
+            --generate-notes
