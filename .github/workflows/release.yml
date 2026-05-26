@@ -7,10 +7,6 @@ on:
         description: Version to publish, without the leading v
         required: true
         type: string
-      image_url:
-        description: Optional image URL to show at the top of the release notes
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -80,30 +76,10 @@ jobs:
           git tag "v${{ inputs.version }}"
           git push origin "v${{ inputs.version }}"
 
-      - name: Generate release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/releases/generate-notes \
-            --method POST \
-            --field tag_name="v${{ inputs.version }}" \
-            --field target_commitish="${{ github.sha }}" \
-            --jq .body > generated-notes.md
-
-          if [ -n "${{ inputs.image_url }}" ]; then
-            {
-              echo "![torrent-tui release image](${{ inputs.image_url }})"
-              echo
-              cat generated-notes.md
-            } > release-notes.md
-          else
-            cp generated-notes.md release-notes.md
-          fi
-
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v${{ inputs.version }}" \
-            --title "torrent-tui v${{ inputs.version }}" \
-            --notes-file release-notes.md
+            --title "Release: torrent-tui v${{ inputs.version }}" \
+            --generate-notes
