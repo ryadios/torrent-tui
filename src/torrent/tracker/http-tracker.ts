@@ -1,18 +1,10 @@
-import { randomBytes } from "node:crypto";
 import { decode } from "../parser.ts";
 import { log } from "../metadata.ts";
+import { getPeerId } from "../peer/peer-id.ts";
 import type { TorrentMetadata } from "../metadata.ts";
 import type { PeerInfo, TrackerResponse } from "../types.ts";
 
 const TEXT_DECODER = new TextDecoder();
-
-const PEER_ID_PREFIX = "-TT0001-";
-
-function generatePeerId(): Uint8Array {
-	const prefix = Buffer.from(PEER_ID_PREFIX);
-	const random = randomBytes(20 - prefix.length);
-	return new Uint8Array(Buffer.concat([prefix, random]));
-}
 
 function encodeBytes(buf: Uint8Array): string {
 	let result = "";
@@ -87,7 +79,7 @@ export async function announce(
 	port = 6881,
 	numwant = 50,
 ): Promise<TrackerResponse> {
-	const peerId = generatePeerId();
+	const peerId = getPeerId();
 	const httpTrackers = metadata.announceList
 		.flat()
 		.filter((u) => u.startsWith("http://") || u.startsWith("https://"));
