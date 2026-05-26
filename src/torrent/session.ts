@@ -17,7 +17,6 @@ export class TorrentSession extends EventEmitter {
 	private transition(next: TorrentStatus): void {
 		const prev = this.status;
 		this.status = next;
-		log("session", `${prev}  ->  ${next}`);
 		this.emit("status", next, prev);
 	}
 

@@ -180,22 +180,11 @@ export class TorrentMetadata {
 	logSummary(): void {
 		const httpTrackers = this.announceList.flat().filter((u) => u.startsWith("http")).length;
 		const udpTrackers = this.announceList.flat().filter((u) => u.startsWith("udp")).length;
-		const trackerStr = [
+		const trackerParts = [
 			httpTrackers > 0 ? `${httpTrackers} HTTP` : "",
 			udpTrackers > 0 ? `${udpTrackers} UDP` : "",
-		].filter(Boolean).join(", ");
+		].filter(Boolean).join("  ");
 
-		log("metadata", `name         ${this.name}`);
-		log("metadata", `size         ${this.formatSize()}`);
-		log("metadata", `pieces       ${this.pieceCount} x ${this.formatPieceLength()}`);
-		log("metadata", `files        ${this.files.length}`);
-		log("metadata", `trackers     ${trackerStr || "none"}`);
-		log("metadata", `piece hashes ${this.pieceCount} loaded`);
-
-		const sample = this.pieceToFileRanges(5);
-		for (const r of sample) {
-			const filename = r.file.path.split("/").pop() ?? r.file.path;
-			log("layout", `piece 5  ->  ${filename}  offset ${r.fileOffset}  len ${r.length}`);
-		}
+		log("torrent", `${this.name}   ${this.formatSize()}   ${this.pieceCount} × ${this.formatPieceLength()}   ${trackerParts || "no trackers"}`);
 	}
 }

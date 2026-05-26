@@ -32,6 +32,7 @@ export class PeerConnection extends EventEmitter {
 	peerChoked = true;
 	peerInterested = false;
 	piecesBitfield: Uint8Array = new Uint8Array(0);
+	suppressDisconnect = false;
 
 	private socket: Socket | null = null;
 	private buf = new MessageBuffer();
@@ -65,7 +66,6 @@ export class PeerConnection extends EventEmitter {
 
 			sock.once("connect", () => {
 				clearTimeout(connectTimeout);
-				log("connected", `${this.address}:${this.port}`);
 				sock.write(buildHandshake(this.infoHash, getPeerId()));
 				this.resetIdleTimer();
 				resolve();
@@ -84,7 +84,6 @@ export class PeerConnection extends EventEmitter {
 
 			sock.once("close", () => {
 				this.cleanup();
-				log("disconnected", `${this.address}:${this.port}`);
 				this.emit("disconnect");
 			});
 		});
@@ -104,7 +103,7 @@ export class PeerConnection extends EventEmitter {
 				const result = parseHandshake(this.handshakeBuffer, this.infoHash);
 				this.peerId = result.peerId;
 				this.handshakeDone = true;
-				log("handshake", `OK  ${this.address}:${this.port}  peer ${this.peerId.slice(0, 8)}...`);
+				log("handshake", `${this.address}:${this.port}   ${this.peerId.slice(0, 8)}`);
 				this.startKeepalive();
 				// Pass any bytes beyond the handshake into the message buffer
 				const remainder = this.handshakeBuffer.slice(HANDSHAKE_LEN);
@@ -112,7 +111,7 @@ export class PeerConnection extends EventEmitter {
 				if (remainder.length > 0) this.onMessages(this.buf.push(remainder));
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				log("handshake", `FAIL  ${this.address}:${this.port}  ${msg}`);
+				log("handshake", `${this.address}:${this.port}   fail  ${msg}`);
 				this.socket?.destroy();
 			}
 			return;
@@ -124,17 +123,13 @@ export class PeerConnection extends EventEmitter {
 	private onMessages(messages: Uint8Array[]): void {
 		for (const raw of messages) {
 			const msg = decodeMsg(raw);
-			log("protocol", `decoded ${msgName(msg.type).padEnd(14)}  ${this.address}:${this.port}  len=${raw.length}`);
-
 			switch (msg.type) {
 				case MSG.CHOKE:
 					this.amChoked = true;
-					log("<- CHOKED", `by ${this.address}:${this.port}`);
 					this.emit("choke");
 					break;
 				case MSG.UNCHOKE:
 					this.amChoked = false;
-					log("<- UNCHOKED", `by ${this.address}:${this.port}`);
 					this.emit("unchoke");
 					break;
 				case MSG.INTERESTED:
@@ -152,8 +147,6 @@ export class PeerConnection extends EventEmitter {
 				case MSG.BITFIELD:
 					if (msg.payload) {
 						this.piecesBitfield = msg.payload;
-						const have = this.countPieces();
-						log("<- BITFIELD", `${this.address}:${this.port}  ${have} pieces`);
 						this.emit("bitfield", msg.payload);
 					}
 					break;
@@ -175,7 +168,7 @@ export class PeerConnection extends EventEmitter {
 		}
 	}
 
-	private countPieces(): number {
+	countPiecesPublic(): number {
 		let n = 0;
 		for (const byte of this.piecesBitfield) {
 			let b = byte;
@@ -193,7 +186,6 @@ export class PeerConnection extends EventEmitter {
 	sendInterested(): void {
 		this.amInterested = true;
 		this.write(encodeMsg({ type: MSG.INTERESTED }));
-		log("-> INTERESTED", `to ${this.address}:${this.port}`);
 	}
 
 	sendNotInterested(): void {
@@ -212,7 +204,6 @@ export class PeerConnection extends EventEmitter {
 
 	sendHave(index: number): void {
 		this.write(encodeHave(index));
-		log("-> HAVE", `piece=${index}  to ${this.address}:${this.port}`);
 	}
 
 	sendBitfield(bitfield: Uint8Array): void {
@@ -222,7 +213,6 @@ export class PeerConnection extends EventEmitter {
 	private startKeepalive(): void {
 		this.keepaliveTimer = setInterval(() => {
 			this.write(encodeMsg({ type: MSG.KEEPALIVE }));
-			log("-> KEEPALIVE", `${this.address}:${this.port}`);
 		}, KEEPALIVE_INTERVAL_MS);
 	}
 

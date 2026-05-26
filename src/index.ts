@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getPeers } from "./torrent/get_peers";
 
 function fail(msg: string): never {
@@ -16,47 +17,44 @@ function validateTorrentArg(arg: string): string {
 	return arg;
 }
 
-async function runVerify(torrentPath: string): Promise<void> {
+function sep(): void {
+	console.log("-".repeat(44));
+}
+
+async function loadTorrent(torrentPath: string) {
 	const { decode } = await import("./torrent/parser");
 	const { TorrentMetadata } = await import("./torrent/metadata");
 	const { TorrentSession } = await import("./torrent/session");
-	const { announce } = await import("./torrent/tracker/http-tracker");
 	const { loadConfig } = await import("./config/index");
 
 	const config = loadConfig();
-	const downloadPath = config.downloadPath.replace(
-		"~",
-		process.env["HOME"] ?? ".",
-	);
-
+	const downloadPath = config.downloadPath.replace("~", process.env["HOME"] ?? ".");
 	const raw = new Uint8Array(readFileSync(torrentPath));
 	const decoded = decode(raw);
 
-	if (
-		typeof decoded !== "object" ||
-		decoded === null ||
-		Array.isArray(decoded) ||
-		decoded instanceof Uint8Array
-	) {
+	if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded) || decoded instanceof Uint8Array) {
 		fail("Invalid torrent file");
 	}
 
-	const metadata = new TorrentMetadata(decoded as { [key: string]: import("./torrent/parser").BencodeValue });
-	metadata.logSummary();
-
+	const metadata = new TorrentMetadata(
+		decoded as { [key: string]: import("./torrent/parser").BencodeValue },
+		raw,
+	);
 	const session = new TorrentSession(metadata, downloadPath);
+	return { metadata, session, downloadPath };
+}
+
+async function runVerify(torrentPath: string): Promise<void> {
+	const { log } = await import("./torrent/metadata");
+	const { announce } = await import("./torrent/tracker/http-tracker");
+	const { metadata, session, downloadPath } = await loadTorrent(torrentPath);
+
+	metadata.logSummary();
 	await session.start();
 
-	const trackerResult = await announce(metadata).catch((e) => {
-		console.log(`Tracker error: ${e instanceof Error ? e.message : e}`);
-		return null;
-	});
-
+	const trackerResult = await announce(metadata).catch(() => null);
 	const peers = trackerResult?.peers ?? [];
 
-	const { join } = await import("node:path");
-
-	// verifyAll already ran inside session.start() — read the result from storage state
 	let valid = 0;
 	let missing = 0;
 	let corrupt = 0;
@@ -65,98 +63,79 @@ async function runVerify(torrentPath: string): Promise<void> {
 		else missing++;
 	}
 
-	const sep = "-".repeat(40);
-	console.log(`\n${sep}`);
-	console.log("  Phase 1 Summary");
-	console.log(sep);
-	console.log(`  torrent      ${metadata.name}`);
-	console.log(`  size         ${metadata.formatSize()}`);
-	console.log(`  pieces       ${metadata.pieceCount} x ${metadata.formatPieceLength()}`);
-	console.log(`  files        ${metadata.files.length}`);
-	const httpCount = metadata.announceList.flat().filter((u) => u.startsWith("http")).length;
-	const udpCount = metadata.announceList.flat().filter((u) => u.startsWith("udp")).length;
-	const trackerStr = [httpCount > 0 ? `${httpCount} HTTP` : "", udpCount > 0 ? `${udpCount} UDP` : ""].filter(Boolean).join(", ");
-	console.log(`  trackers     ${trackerStr || "none"}`);
-	console.log(`  peers        ${peers.length}`);
 	console.log("");
-	console.log("  pieces       valid    " + valid);
-	console.log("               missing  " + missing);
-	console.log("               corrupt  " + corrupt);
+	sep();
+	console.log("  Verify Summary");
+	sep();
+	log("storage", `${metadata.files.map((f) => join(downloadPath, f.path)).join(", ")}`);
+	log("verify", `${valid} valid   ${missing} missing   ${corrupt} corrupt   (${metadata.pieceCount} total)`);
+	log("tracker", `${peers.length} peers`);
 	console.log("");
-	console.log("  files on disk");
 	for (const file of metadata.files) {
 		const fullPath = join(downloadPath, file.path);
-		const exists = existsSync(fullPath);
-		console.log(`    ${exists ? "✓" : "✗"}  ${fullPath}`);
+		console.log(`  ${existsSync(fullPath) ? "✓" : "✗"}  ${fullPath}`);
 	}
-	console.log(sep);
+	sep();
 }
 
 async function runHandshake(torrentPath: string): Promise<void> {
-	const { decode } = await import("./torrent/parser");
-	const { TorrentMetadata, log } = await import("./torrent/metadata");
-	const { TorrentSession } = await import("./torrent/session");
 	const { announce } = await import("./torrent/tracker/http-tracker");
 	const { PeerManager } = await import("./torrent/peer/manager");
 	const { getPeerId, peerIdToString } = await import("./torrent/peer/peer-id");
-	const { loadConfig } = await import("./config/index");
+	const { metadata, session } = await loadTorrent(torrentPath);
 
-	const config = loadConfig();
-	const downloadPath = config.downloadPath.replace("~", process.env["HOME"] ?? ".");
-
-	const raw = new Uint8Array(readFileSync(torrentPath));
-	const decoded = decode(raw);
-	if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded) || decoded instanceof Uint8Array) {
-		fail("Invalid torrent file");
-	}
-
-	const metadata = new TorrentMetadata(decoded as { [key: string]: import("./torrent/parser").BencodeValue });
 	metadata.logSummary();
+	const { log } = await import("./torrent/metadata");
+	log("peer-id", peerIdToString(getPeerId()));
 
-	const peerId = getPeerId();
-	log("peer-id", peerIdToString(peerId).slice(0, 20));
-
-	const session = new TorrentSession(metadata, downloadPath);
+	// session.start() internally logs storage + verify
 	await session.start();
 
+	// announce() internally logs tracker result
 	const trackerResult = await announce(metadata).catch(() => null);
 	const peers = trackerResult?.peers ?? [];
 
+	console.log("");
+
+	// manager.start() internally logs the listener port
 	const manager = new PeerManager(metadata);
 	await manager.start();
+
+	// connect() logs one "handshake" line per peer (success or timeout)
 	await manager.connect(peers);
 
-	// Wait up to 15s for handshakes and bitfields to come in
+	// Wait up to 15s for bitfields and unchokes to arrive
 	await new Promise((r) => setTimeout(r, 15_000));
 
 	const connected = [...manager.connections.values()];
-	const sep = "-".repeat(40);
-	console.log(`\n${sep}`);
-	console.log("  Phase 2 Summary");
-	console.log(sep);
-	console.log(`  listening port   ${manager["listener"].port}`);
-	console.log(`  attempted        ${peers.length}`);
-	console.log(`  handshakes OK    ${connected.length}`);
-	console.log(`  failed           ${peers.length - connected.length}`);
+	const unchoked = connected.filter((c) => !c.amChoked);
+	const failed = peers.length - connected.length;
+
+	// Summary
+	const W = 80;
+	const line = "-".repeat(W);
+	console.log(`\n${line}`);
+	console.log("  Connection Summary");
+	console.log(line);
+	console.log(`  attempted    ${peers.length}`);
+	console.log(`  connected    ${connected.length}    unchoked ${unchoked.length}    failed ${failed}`);
 
 	if (connected.length > 0) {
+		const AW = 46; // address column width (fits longest IPv6+port)
+		const CW = 10; // client ID column
+		const PW = 13; // pieces column
 		console.log("");
-		console.log("  Connected peers:");
-		console.log(`    ${"Address".padEnd(26)} ${"Pieces".padEnd(12)} Choked   Interested`);
+		console.log(`  ${"address".padEnd(AW)}  ${"client".padEnd(CW)}  ${"pieces".padEnd(PW)}  choked`);
+		console.log(`  ${"-".repeat(W - 2)}`);
 		for (const c of connected) {
-			const have = [...c.piecesBitfield].reduce((n, b) => {
-				let x = b; let cnt = 0;
-				while (x) { cnt += x & 1; x >>>= 1; }
-				return n + cnt;
-			}, 0);
-			const addr = `${c.address}:${c.port}`.padEnd(26);
-			const pieces = `${have}/${metadata.pieceCount}`.padEnd(12);
-			const choked = c.amChoked ? "yes" : "no ";
-			const interested = c.amInterested ? "yes" : "no";
-			console.log(`    ${addr} ${pieces} ${choked}      ${interested}`);
+			const addr = `${c.address}:${c.port}`.padEnd(AW);
+			const client = c.peerId.slice(0, 8).padEnd(CW);
+			const pieces = `${c.countPiecesPublic()}/${metadata.pieceCount}`.padEnd(PW);
+			const choked = c.amChoked ? "yes" : "no";
+			console.log(`  ${addr}  ${client}  ${pieces}  ${choked}`);
 		}
 	}
-	console.log(sep);
+	console.log(line);
 
 	manager.close();
 }

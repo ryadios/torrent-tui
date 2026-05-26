@@ -35,8 +35,6 @@ export class PeerManager {
 		await Promise.allSettled(
 			toConnect.map((p) => this.connectOne(p.ip, p.port)),
 		);
-
-		log("pool", `${this.connections.size} / ${this.maxConnections} connected`);
 	}
 
 	private async connectOne(ip: string, port: number): Promise<void> {
@@ -46,10 +44,7 @@ export class PeerManager {
 		const conn = new PeerConnection(ip, port, this.infoHash);
 
 		conn.on("bitfield", () => {
-			const have = this.countBits(conn.piecesBitfield);
-			log("<- BITFIELD", `${ip}:${port}  ${have} / ${this.pieceCount} pieces`);
-			// Send INTERESTED if the peer has pieces we need
-			if (have > 0 && !conn.amInterested) conn.sendInterested();
+			if (conn.countPiecesPublic() > 0 && !conn.amInterested) conn.sendInterested();
 		});
 
 		conn.on("disconnect", () => {
@@ -60,7 +55,7 @@ export class PeerManager {
 			await conn.connect();
 			this.connections.set(key, conn);
 		} catch {
-			// connect() already logged the failure
+			// timeout/error already logged by connection.ts
 		}
 	}
 
@@ -84,7 +79,7 @@ export class PeerManager {
 				const ip = socket.remoteAddress ?? "unknown";
 				const port = socket.remotePort ?? 0;
 				const key = `${ip}:${port}`;
-				log("handshake", `OK (inbound)  ${key}  peer ${result.peerId.slice(0, 8)}...`);
+				log("peer", `${key.padEnd(50)}  ok   ${result.peerId.slice(0, 8)}  (inbound)`);
 
 				// Wrap the existing socket in a PeerConnection
 				const conn = new PeerConnection(ip, port, this.infoHash);
@@ -134,7 +129,10 @@ export class PeerManager {
 	}
 
 	close(): void {
-		for (const conn of this.connections.values()) conn.destroy();
+		for (const conn of this.connections.values()) {
+			conn.suppressDisconnect = true;
+			conn.destroy();
+		}
 		this.connections.clear();
 		this.listener.close();
 	}
