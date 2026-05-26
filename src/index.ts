@@ -154,10 +154,13 @@ async function runDownload(torrentPath: string): Promise<void> {
 
 	const trackerResult = await announce(metadata).catch(() => null);
 	const peers = trackerResult?.peers ?? [];
-	console.log("");
 
+	console.log("");
 	const manager = new PeerManager(metadata);
 	await manager.start();
+
+	// connect() now resolves only after each handshake completes —
+	// so all handshake logs finish before the progress bar starts
 	await manager.connect(peers);
 
 	if (manager.connections.size === 0) {
@@ -167,6 +170,8 @@ async function runDownload(torrentPath: string): Promise<void> {
 	}
 
 	const downloader = session.download(manager);
+	log("log file", downloader.getLogFilePath());
+	console.log("");
 
 	await new Promise<void>((resolve) => {
 		session.on("complete", () => resolve());
@@ -176,7 +181,7 @@ async function runDownload(torrentPath: string): Promise<void> {
 		});
 	});
 
-	const downloaded = session.storage["downloadedPieces"].size;
+	const downloaded = session.storage.downloadedCount;
 	const W = 80;
 	const line = "-".repeat(W);
 

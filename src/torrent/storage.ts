@@ -159,6 +159,14 @@ export class StorageManager {
 		return this.downloadedPieces.has(pieceIndex);
 	}
 
+	get downloadedCount(): number {
+		return this.downloadedPieces.size;
+	}
+
+	getDownloadedPieces(): ReadonlySet<number> {
+		return this.downloadedPieces;
+	}
+
 	getBitfield(): Uint8Array {
 		const byteCount = Math.ceil(this.metadata.pieceCount / 8);
 		const bitfield = new Uint8Array(byteCount);

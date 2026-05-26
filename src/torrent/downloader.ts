@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SHA1 } from "bun";
 import { log } from "./metadata.ts";
@@ -30,6 +30,8 @@ export class Downloader extends EventEmitter {
 	private lastSpeedReset = Date.now();
 	private speedBytesPerSec = 0;
 	private progressInterval: ReturnType<typeof setInterval> | null = null;
+	private logFilePath: string;
+	private progressActive = false;
 
 	constructor(
 		private metadata: TorrentMetadata,
@@ -38,7 +40,13 @@ export class Downloader extends EventEmitter {
 		private downloadPath: string,
 	) {
 		super();
+		const logDir = join(getDataDir(), "logs");
+		if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+		const hex = Buffer.from(metadata.infoHash).toString("hex");
+		this.logFilePath = join(logDir, `${hex}.log`);
 	}
+
+	getLogFilePath(): string { return this.logFilePath; }
 
 	start(): void {
 		this.loadResume();
@@ -67,6 +75,10 @@ export class Downloader extends EventEmitter {
 	stop(): void {
 		this.stopped = true;
 		if (this.progressInterval) clearInterval(this.progressInterval);
+		if (this.progressActive) {
+			process.stdout.write("\n");
+			this.progressActive = false;
+		}
 	}
 
 	private wirePeer(conn: PeerConnection): void {
@@ -133,7 +145,7 @@ export class Downloader extends EventEmitter {
 			// Start this piece
 			const total = this.pieceBlockCount(i);
 			this.inProgress.set(i, { blocks: new Array(total).fill(null), received: 0, total });
-			log("piece", `${i}  requesting ${total} blocks`);
+			this.fileLog(`piece ${i}  started  ${total} blocks`);
 			const length = this.blockLength(i, 0);
 			return { pieceIndex: i, begin: 0, length };
 		}
@@ -184,13 +196,14 @@ export class Downloader extends EventEmitter {
 		if (!expected || !bufEqual(actual, expected)) {
 			const strikes = (this.corruptStrikes.get(key) ?? 0) + 1;
 			this.corruptStrikes.set(key, strikes);
-			log("piece", `${index}  FAIL  (peer ${conn.peerId.slice(0, 8)}, strike ${strikes})`);
+			this.fileLog(`piece ${index}  FAIL  peer ${conn.peerId.slice(0, 8)}  strike ${strikes}`);
+			this.consolePrint(`  piece       ${index}  FAIL  (${conn.peerId.slice(0, 8)}, strike ${strikes})`);
 
 			if (strikes >= CORRUPT_STRIKE_LIMIT) {
 				this.bannedPeers.add(key);
 				conn.suppressDisconnect = true;
 				conn.destroy();
-				log("banned", `${conn.peerId.slice(0, 8)}  (${strikes} corrupt pieces)`);
+				this.consolePrint(`  banned      ${conn.peerId.slice(0, 8)}  (${strikes} corrupt pieces)`);
 			}
 
 			this.emit("piece:failed", index, key);
@@ -201,7 +214,7 @@ export class Downloader extends EventEmitter {
 		// Write to disk
 		this.storage.writePieceSync(index, assembled);
 		this.saveResume();
-		log("piece", `${index}  ok`);
+		this.fileLog(`piece ${index}  ok`);
 
 		// Broadcast HAVE to all connected peers
 		for (const peer of this.manager.connections.values()) {
@@ -221,14 +234,14 @@ export class Downloader extends EventEmitter {
 
 		this.emit(
 			"progress",
-			this.storage["downloadedPieces"].size,
+			this.storage.downloadedCount,
 			this.metadata.pieceCount,
 			this.speedBytesPerSec,
 		);
 
-		if (this.storage["downloadedPieces"].size === this.metadata.pieceCount) {
+		if (this.storage.downloadedCount === this.metadata.pieceCount) {
 			this.stop();
-			log("complete", `${this.metadata.pieceCount} / ${this.metadata.pieceCount} pieces   ${this.metadata.name}`);
+			this.consolePrint(`  complete     ${this.metadata.pieceCount} / ${this.metadata.pieceCount} pieces   ${this.metadata.name}`);
 			this.emit("complete");
 		}
 	}
@@ -264,15 +277,45 @@ export class Downloader extends EventEmitter {
 	}
 
 	private logProgress(): void {
-		const downloaded = this.storage["downloadedPieces"].size;
+		const downloaded = this.storage.downloadedCount;
 		const total = this.metadata.pieceCount;
+		const pct = total > 0 ? downloaded / total : 0;
 		const mbps = (this.speedBytesPerSec / (1024 * 1024)).toFixed(1);
 		const remaining = total - downloaded;
-		const eta = this.speedBytesPerSec > 0
+		const etaSecs = this.speedBytesPerSec > 0
 			? Math.ceil((remaining * this.metadata.pieceLength) / this.speedBytesPerSec)
 			: 0;
-		const etaStr = eta > 0 ? `ETA ${Math.floor(eta / 60)}:${String(eta % 60).padStart(2, "0")}` : "";
-		log("progress", `${downloaded} / ${total} pieces   ${mbps} MB/s   ${etaStr}`);
+		const eta = etaSecs > 0
+			? `${Math.floor(etaSecs / 60)}:${String(etaSecs % 60).padStart(2, "0")}`
+			: "--:--";
+
+		const cols = process.stdout.columns ?? 80;
+		const statsStr = `  ${downloaded}/${total} (${(pct * 100).toFixed(1)}%)  ${mbps} MB/s  ETA ${eta}`;
+		const barWidth = Math.max(8, cols - statsStr.length - 4);
+		const filled = Math.floor(pct * barWidth);
+		const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
+		const line = `  [${bar}]${statsStr}`;
+
+		if (process.stdout.isTTY) {
+			process.stdout.write(`\r${line.padEnd(cols - 1)}`);
+			this.progressActive = true;
+		} else {
+			log("progress", `${downloaded} / ${total}  ${mbps} MB/s  ETA ${eta}`);
+		}
+	}
+
+	private consolePrint(line: string): void {
+		if (this.progressActive) {
+			const cols = process.stdout.columns ?? 80;
+			process.stdout.write(`\r${" ".repeat(cols - 1)}\r`); // clear progress line
+		}
+		console.log(line);
+		if (this.progressActive) this.logProgress(); // redraw bar
+	}
+
+	private fileLog(message: string): void {
+		const time = new Date().toISOString().slice(11, 19);
+		appendFileSync(this.logFilePath, `[${time}] ${message}\n`);
 	}
 
 	// Resume
@@ -299,7 +342,9 @@ export class Downloader extends EventEmitter {
 				return;
 			}
 			for (const i of data.downloadedPieces) this.storage.markPiece(i);
-			log("resume", `${data.downloadedPieces.length} / ${this.metadata.pieceCount} pieces restored`);
+			const n = data.downloadedPieces.length;
+			log("resume", `${n} / ${this.metadata.pieceCount} pieces restored`);
+			this.fileLog(`resume loaded: ${n} pieces`);
 		} catch {
 			log("resume", "could not read save file — starting fresh");
 		}
@@ -313,7 +358,7 @@ export class Downloader extends EventEmitter {
 		const data = {
 			infoHash: Buffer.from(this.metadata.infoHash).toString("hex"),
 			downloadPath: this.downloadPath,
-			downloadedPieces: [...this.storage["downloadedPieces"]],
+			downloadedPieces: [...this.storage.getDownloadedPieces()],
 			savedAt: Math.floor(Date.now() / 1000),
 		};
 		writeFileSync(path, JSON.stringify(data), "utf-8");

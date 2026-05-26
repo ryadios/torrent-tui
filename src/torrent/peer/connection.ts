@@ -13,7 +13,6 @@ import {
 	decodeHave,
 	decodePiece,
 	decodeRequest,
-	msgName,
 } from "./protocol.ts";
 import { buildHandshake, parseHandshake, HANDSHAKE_LEN } from "./handshake.ts";
 import { getPeerId } from "./peer-id.ts";
@@ -41,6 +40,7 @@ export class PeerConnection extends EventEmitter {
 	private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private infoHash: Uint8Array;
+	private settle?: (err?: Error) => void;
 
 	constructor(
 		address: string,
@@ -55,20 +55,29 @@ export class PeerConnection extends EventEmitter {
 
 	connect(): Promise<void> {
 		return new Promise((resolve, reject) => {
+			let settled = false;
+			this.settle = (err?: Error) => {
+				if (settled) return;
+				settled = true;
+				this.settle = undefined;
+				if (err) reject(err);
+				else resolve();
+			};
+
 			const sock = createConnection({ host: this.address, port: this.port });
 			this.socket = sock;
 
-			const connectTimeout = setTimeout(() => {
-				sock.destroy();
+			const timeout = setTimeout(() => {
 				log("timeout", `${this.address}:${this.port}  after ${CONNECT_TIMEOUT_MS / 1000}s`);
-				reject(new Error("connect timeout"));
+				sock.destroy();
+				this.settle?.(new Error("connect timeout"));
 			}, CONNECT_TIMEOUT_MS);
 
 			sock.once("connect", () => {
-				clearTimeout(connectTimeout);
+				clearTimeout(timeout);
 				sock.write(buildHandshake(this.infoHash, getPeerId()));
 				this.resetIdleTimer();
-				resolve();
+				// Do NOT resolve here — wait for handshake to complete in onData
 			});
 
 			sock.on("data", (chunk: Buffer) => {
@@ -77,13 +86,14 @@ export class PeerConnection extends EventEmitter {
 			});
 
 			sock.once("error", (err) => {
-				clearTimeout(connectTimeout);
+				clearTimeout(timeout);
 				log("error", `${this.address}:${this.port}  ${err.message}`);
-				reject(err);
+				this.settle?.(err);
 			});
 
 			sock.once("close", () => {
 				this.cleanup();
+				this.settle?.(new Error("closed before handshake"));
 				this.emit("disconnect");
 			});
 		});
@@ -103,15 +113,16 @@ export class PeerConnection extends EventEmitter {
 				const result = parseHandshake(this.handshakeBuffer, this.infoHash);
 				this.peerId = result.peerId;
 				this.handshakeDone = true;
-				log("handshake", `${this.address}:${this.port}   ${this.peerId.slice(0, 8)}`);
 				this.startKeepalive();
-				// Pass any bytes beyond the handshake into the message buffer
+				log("handshake", `${this.address}:${this.port}   ${this.peerId.slice(0, 8)}`);
+				this.settle?.(); // resolve the connect() promise
 				const remainder = this.handshakeBuffer.slice(HANDSHAKE_LEN);
 				this.handshakeBuffer = new Uint8Array(0);
 				if (remainder.length > 0) this.onMessages(this.buf.push(remainder));
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				log("handshake", `${this.address}:${this.port}   fail  ${msg}`);
+				this.settle?.(new Error(msg));
 				this.socket?.destroy();
 			}
 			return;
