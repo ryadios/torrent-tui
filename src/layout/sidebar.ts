@@ -25,17 +25,21 @@ export class Sidebar {
 		this.renderer.root.add(this.container);
 	}
 
-	update(state?: AppState): void {
+	update(state?: AppState, focusArea: "sidebar" | "table" = "sidebar"): void {
 		const s = state ?? this.store.getState();
 		const theme = getTheme();
+		const sidebarActive = focusArea === "sidebar";
+
+		(this.container as unknown as { borderColor: string }).borderColor =
+			sidebarActive ? theme.accent : theme.border;
 
 		for (const item of this.itemTexts) {
 			const itemName = SIDEBAR_ITEMS.status[item.globalIndex] ?? "";
 			const isSelected = item.globalIndex === s.selectedIndex;
 			(item.text as unknown as { content: string }).content =
-				`${isSelected ? "> " : "  "}${itemName}`;
+				`${isSelected && sidebarActive ? "> " : "  "}${itemName}`;
 			(item.text as unknown as { fg: string }).fg = isSelected
-				? theme.accent
+				? (sidebarActive ? theme.accent : theme.fgSecondary)
 				: theme.fgPrimary;
 		}
 	}
