@@ -6,12 +6,39 @@ import type { PeerInfo, TrackerResponse } from "../types.ts";
 
 const TEXT_DECODER = new TextDecoder();
 
+// RFC 3986: unreserved characters must NOT be percent-encoded.
+// Encoding them anyway causes tracker hash mismatches (Ubuntu's tracker enforces this).
 function encodeBytes(buf: Uint8Array): string {
 	let result = "";
 	for (const byte of buf) {
-		result += `%${byte.toString(16).padStart(2, "0")}`;
+		if (
+			(byte >= 0x30 && byte <= 0x39) || // 0-9
+			(byte >= 0x41 && byte <= 0x5a) || // A-Z
+			(byte >= 0x61 && byte <= 0x7a) || // a-z
+			byte === 0x2d || // -
+			byte === 0x5f || // _
+			byte === 0x2e || // .
+			byte === 0x7e    // ~
+		) {
+			result += String.fromCharCode(byte);
+		} else {
+			result += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+		}
 	}
 	return result;
+}
+
+function parseDictPeers(list: import("../parser.ts").BencodeValue[]): PeerInfo[] {
+	const peers: PeerInfo[] = [];
+	for (const entry of list) {
+		if (typeof entry !== "object" || entry === null || Array.isArray(entry) || entry instanceof Uint8Array) continue;
+		const ipRaw = entry["ip"];
+		const port = entry["port"];
+		if (typeof port !== "number") continue;
+		const ip = ipRaw instanceof Uint8Array ? TEXT_DECODER.decode(ipRaw) : typeof ipRaw === "string" ? ipRaw : null;
+		if (ip) peers.push({ ip, port });
+	}
+	return peers;
 }
 
 function parseCompactPeers(data: Uint8Array): PeerInfo[] {
@@ -70,8 +97,18 @@ async function announceToTracker(
 	}
 
 	const peersRaw = decoded["peers"];
-	if (!(peersRaw instanceof Uint8Array)) return [];
-	return parseCompactPeers(peersRaw);
+
+	// Compact format: binary blob, 6 bytes per IPv4 peer
+	if (peersRaw instanceof Uint8Array) {
+		return parseCompactPeers(peersRaw);
+	}
+
+	// Dictionary format: list of {ip, port, peer id} dicts (used for IPv6 or non-compact)
+	if (Array.isArray(peersRaw)) {
+		return parseDictPeers(peersRaw);
+	}
+
+	return [];
 }
 
 export async function announce(

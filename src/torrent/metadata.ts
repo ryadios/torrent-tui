@@ -1,5 +1,5 @@
 import { SHA1 } from "bun";
-import { encode } from "./parser.ts";
+import { extractInfoBytes } from "./parser.ts";
 import type { BencodeValue } from "./parser.ts";
 import type { FileInfo } from "./types.ts";
 
@@ -20,7 +20,7 @@ export class TorrentMetadata {
 	readonly infoHash: Uint8Array;
 	readonly announceList: string[][];
 
-	constructor(decoded: { [key: string]: BencodeValue }) {
+	constructor(decoded: { [key: string]: BencodeValue }, rawTorrentBytes: Uint8Array) {
 		const info = decoded["info"];
 		if (
 			typeof info !== "object" ||
@@ -103,8 +103,9 @@ export class TorrentMetadata {
 			throw new Error("info dict must have length or files");
 		}
 
-		// SHA1.hash returns TypedArray at runtime but Bun types it as generic TypedArray
-		this.infoHash = SHA1.hash(encode(info)) as unknown as Uint8Array;
+		// Hash the raw bytes from the original file — not a re-encoded version.
+		// BEP 3: must extract the substring directly, not decode-encode roundtrip.
+		this.infoHash = SHA1.hash(extractInfoBytes(rawTorrentBytes)) as unknown as Uint8Array;
 
 		// announce list (BEP 12)
 		const announceListRaw = decoded["announce-list"];
