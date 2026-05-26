@@ -4,9 +4,10 @@
 	"type": "module",
 	"private": true,
 	"scripts": {
-		"start": "bun run src/index.ts",
-		"dev": "bun run --watch src/index.ts",
-		"help": "bun run src/index.ts --help",
+		"start": "bun src/index.ts",
+		"dev": "bun --watch src/index.ts",
+		"verify": "bun src/index.ts --verify",
+		"typecheck": "tsc --noEmit",
 		"check:fix": "biome check --write --unsafe"
 	},
 	"devDependencies": {
