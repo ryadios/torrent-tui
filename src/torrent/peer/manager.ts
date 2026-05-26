@@ -13,6 +13,10 @@ export class PeerManager extends EventEmitter {
 	private maxConnections: number;
 	private infoHash: Uint8Array;
 	private pieceCount: number;
+	private chokeTimer: ReturnType<typeof setInterval> | null = null;
+	private optimisticTimer: ReturnType<typeof setInterval> | null = null;
+	private optimisticKey: string | null = null;
+	private unchokedKeys = new Set<string>();
 
 	constructor(metadata: TorrentMetadata, maxConnections = 50) {
 		super();
@@ -112,6 +116,92 @@ export class PeerManager extends EventEmitter {
 		return [...this.connections.values()].filter((c) => !c.amChoked);
 	}
 
+	startChoking(): void {
+		// BEP 3: recalculate every 10s, optimistic rotates every 30s
+		this.chokeTimer = setInterval(() => this.recalculateChokes(), 10_000);
+		this.optimisticTimer = setInterval(() => this.rotateOptimisticUnchoke(), 30_000);
+		// Run immediately so peers are unchoked on download start
+		this.recalculateChokes();
+	}
+
+	stopChoking(): void {
+		if (this.chokeTimer) clearInterval(this.chokeTimer);
+		if (this.optimisticTimer) clearInterval(this.optimisticTimer);
+		this.chokeTimer = null;
+		this.optimisticTimer = null;
+	}
+
+	private recalculateChokes(): void {
+		const peers = [...this.connections.values()];
+
+		// Snapshot rates and reset interval counters
+		for (const p of peers) {
+			p.downloadBytesPerSec = p.downloadedThisInterval;
+			p.uploadBytesPerSec = p.uploadedThisInterval;
+			p.downloadedThisInterval = 0;
+			p.uploadedThisInterval = 0;
+		}
+
+		// BEP 3: unchoke top 4 by download rate from them (reciprocation)
+		const interested = peers.filter((p) => p.peerInterested);
+		const sorted = [...interested].sort((a, b) => b.downloadBytesPerSec - a.downloadBytesPerSec);
+		const toUnchoke = new Set<string>();
+
+		for (let i = 0; i < Math.min(4, sorted.length); i++) {
+			const p = sorted[i];
+			if (p) toUnchoke.add(`${p.address}:${p.port}`);
+		}
+		if (this.optimisticKey) toUnchoke.add(this.optimisticKey);
+
+		// Apply choke/unchoke changes
+		for (const p of peers) {
+			const key = `${p.address}:${p.port}`;
+			const shouldUnchoke = toUnchoke.has(key);
+			const wasUnchoked = this.unchokedKeys.has(key);
+			if (shouldUnchoke && !wasUnchoked) p.sendUnchoke();
+			else if (!shouldUnchoke && wasUnchoked) p.sendChoke();
+		}
+		this.unchokedKeys = toUnchoke;
+
+		if (toUnchoke.size > 0) {
+			const labels = [...toUnchoke]
+				.slice(0, 4)
+				.map((k) => {
+					const c = this.connections.get(k);
+					const mbps = ((c?.downloadBytesPerSec ?? 0) / (1024 * 1024)).toFixed(1);
+					return `${c?.peerId.slice(0, 8) ?? k}(${mbps})`;
+				})
+				.join("  ");
+			const optLabel = this.optimisticKey
+				? `  opt: ${this.connections.get(this.optimisticKey)?.peerId.slice(0, 8) ?? this.optimisticKey}`
+				: "";
+			log("unchoke", `${labels}${optLabel}`);
+		}
+	}
+
+	private rotateOptimisticUnchoke(): void {
+		const choked = [...this.connections.values()].filter(
+			(p) => !this.unchokedKeys.has(`${p.address}:${p.port}`) && p.peerInterested,
+		);
+		if (choked.length === 0) return;
+
+		// BEP 3: new connections are 3× as likely — simplified: just pick random
+		const pick = choked[Math.floor(Math.random() * choked.length)];
+		if (!pick) return;
+
+		const key = `${pick.address}:${pick.port}`;
+		if (this.optimisticKey && this.optimisticKey !== key) {
+			// Choke the previous optimistic peer if not in regular slots
+			if (!this.unchokedKeys.has(this.optimisticKey)) {
+				this.connections.get(this.optimisticKey)?.sendChoke();
+			}
+		}
+		this.optimisticKey = key;
+		pick.sendUnchoke();
+		this.unchokedKeys.add(key);
+		log("unchoke-opt", `${pick.peerId.slice(0, 8)}  (optimistic slot)`);
+	}
+
 	private dedup(peers: PeerInfo[]): PeerInfo[] {
 		const seen = new Set<string>();
 		return peers.filter((p) => {
@@ -132,6 +222,7 @@ export class PeerManager extends EventEmitter {
 	}
 
 	close(): void {
+		this.stopChoking();
 		for (const conn of this.connections.values()) {
 			conn.suppressDisconnect = true;
 			conn.destroy();

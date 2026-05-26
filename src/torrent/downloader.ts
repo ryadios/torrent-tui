@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { join } from "node:path";
 import { SHA1 } from "bun";
 import { log } from "./metadata.ts";
+import { PiecePicker } from "./piece-picker.ts";
 import { getDataDir } from "../utils/paths.ts";
 import type { TorrentMetadata } from "./metadata.ts";
 import type { StorageManager } from "./storage.ts";
@@ -29,9 +30,11 @@ export class Downloader extends EventEmitter {
 	private bytesThisSecond = 0;
 	private lastSpeedReset = Date.now();
 	private speedBytesPerSec = 0;
+	private uploadBytesPerSec = 0;
 	private progressInterval: ReturnType<typeof setInterval> | null = null;
 	private logFilePath: string;
 	private progressActive = false;
+	private picker!: PiecePicker;
 
 	constructor(
 		private metadata: TorrentMetadata,
@@ -49,6 +52,12 @@ export class Downloader extends EventEmitter {
 	getLogFilePath(): string { return this.logFilePath; }
 
 	start(): void {
+		this.picker = new PiecePicker(
+			this.metadata.pieceCount,
+			(i) => this.storage.hasPiece(i),
+			(i) => this.inProgress.has(i),
+		);
+
 		this.loadResume();
 		this.advanceNextPiece();
 
@@ -57,14 +66,16 @@ export class Downloader extends EventEmitter {
 			return;
 		}
 
-		// Wire up existing unchoked peers
+		// Wire up existing peers and seed their availability into the picker
 		for (const conn of this.manager.connections.values()) {
+			this.picker.addPeer(conn);
 			this.wirePeer(conn);
 			if (!conn.amChoked) this.fillPipeline(conn);
 		}
 
 		// Wire up peers that connect after start()
 		this.manager.on("peerAdded", (conn: PeerConnection) => {
+			this.picker.addPeer(conn);
 			this.wirePeer(conn);
 			if (!conn.amChoked) this.fillPipeline(conn);
 		});
@@ -86,6 +97,11 @@ export class Downloader extends EventEmitter {
 		if (this.bannedPeers.has(key)) return;
 		if (!this.pendingRequests.has(key)) this.pendingRequests.set(key, new Set());
 
+		// Tell the peer what pieces we already have
+		if (this.storage.downloadedCount > 0) {
+			conn.sendBitfield(this.storage.getBitfield());
+		}
+
 		conn.on("unchoke", () => {
 			if (!this.stopped && !this.bannedPeers.has(key)) this.fillPipeline(conn);
 		});
@@ -94,11 +110,27 @@ export class Downloader extends EventEmitter {
 			this.clearPending(key);
 		});
 
+		conn.on("have", (index: number) => {
+			this.picker.onHave(index);
+		});
+
 		conn.on("piece", (index: number, begin: number, block: Uint8Array) => {
 			this.onBlock(conn, index, begin, block);
 		});
 
+		// Seeding: serve blocks to unchoked peers that request pieces we have
+		conn.on("request", (index: number, begin: number, length: number) => {
+			if (conn.peerChoked) return; // we choked this peer — don't serve
+			if (!this.storage.hasPiece(index)) return;
+			const piece = this.storage.readPieceSync(index);
+			const block = Buffer.from(piece).subarray(begin, begin + length);
+			conn.sendPiece(index, begin, block);
+			this.uploadBytesPerSec = (this.uploadBytesPerSec + block.length) / 2;
+			log("upload", `piece=${index} block=${begin / 16384}  ${conn.address}:${conn.port}`);
+		});
+
 		conn.on("disconnect", () => {
+			this.picker.removePeer(conn);
 			this.clearPending(key);
 		});
 	}
@@ -122,35 +154,26 @@ export class Downloader extends EventEmitter {
 	}
 
 	private nextBlock(conn: PeerConnection): { pieceIndex: number; begin: number; length: number } | null {
-		// First: try to finish an in-progress piece the peer has
+		// Tier 1: finish any in-progress piece this peer has (avoids partial waste)
 		for (const [pieceIndex, piece] of this.inProgress) {
 			if (!conn.hasPiece(pieceIndex)) continue;
 			for (let b = 0; b < piece.total; b++) {
 				if (piece.blocks[b] !== null) continue;
 				const begin = b * BLOCK_SIZE;
 				const reqKey = `${pieceIndex}:${begin}`;
-				// Skip if already requested from any peer
 				if (this.isRequested(reqKey)) continue;
-				const length = this.blockLength(pieceIndex, b);
-				return { pieceIndex, begin, length };
+				return { pieceIndex, begin, length: this.blockLength(pieceIndex, b) };
 			}
 		}
 
-		// Then: find the next sequential piece
-		for (let i = this.nextPieceIndex; i < this.metadata.pieceCount; i++) {
-			if (this.storage.hasPiece(i)) continue;
-			if (this.inProgress.has(i)) continue;
-			if (!conn.hasPiece(i)) continue;
+		// Tier 2: rarest-first via PiecePicker
+		const pieceIndex = this.picker.pick(conn);
+		if (pieceIndex === null) return null;
 
-			// Start this piece
-			const total = this.pieceBlockCount(i);
-			this.inProgress.set(i, { blocks: new Array(total).fill(null), received: 0, total });
-			this.fileLog(`piece ${i}  started  ${total} blocks`);
-			const length = this.blockLength(i, 0);
-			return { pieceIndex: i, begin: 0, length };
-		}
-
-		return null;
+		const total = this.pieceBlockCount(pieceIndex);
+		this.inProgress.set(pieceIndex, { blocks: new Array(total).fill(null), received: 0, total });
+		this.fileLog(`piece ${pieceIndex}  started  ${total} blocks  (avail ${this.picker.availabilityOf(pieceIndex)})`);
+		return { pieceIndex, begin: 0, length: this.blockLength(pieceIndex, 0) };
 	}
 
 	private isRequested(reqKey: string): boolean {
@@ -280,7 +303,8 @@ export class Downloader extends EventEmitter {
 		const downloaded = this.storage.downloadedCount;
 		const total = this.metadata.pieceCount;
 		const pct = total > 0 ? downloaded / total : 0;
-		const mbps = (this.speedBytesPerSec / (1024 * 1024)).toFixed(1);
+		const dlMbps = (this.speedBytesPerSec / (1024 * 1024)).toFixed(1);
+		const ulKbps = (this.uploadBytesPerSec / 1024).toFixed(0);
 		const remaining = total - downloaded;
 		const etaSecs = this.speedBytesPerSec > 0
 			? Math.ceil((remaining * this.metadata.pieceLength) / this.speedBytesPerSec)
@@ -290,7 +314,7 @@ export class Downloader extends EventEmitter {
 			: "--:--";
 
 		const cols = process.stdout.columns ?? 80;
-		const statsStr = `  ${downloaded}/${total} (${(pct * 100).toFixed(1)}%)  ${mbps} MB/s  ETA ${eta}`;
+		const statsStr = `  ${downloaded}/${total} (${(pct * 100).toFixed(1)}%)  ↓${dlMbps}MB/s  ↑${ulKbps}KB/s  ETA ${eta}`;
 		const barWidth = Math.max(8, cols - statsStr.length - 4);
 		const filled = Math.floor(pct * barWidth);
 		const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
@@ -300,7 +324,7 @@ export class Downloader extends EventEmitter {
 			process.stdout.write(`\r${line.padEnd(cols - 1)}`);
 			this.progressActive = true;
 		} else {
-			log("progress", `${downloaded} / ${total}  ${mbps} MB/s  ETA ${eta}`);
+			log("progress", `${downloaded} / ${total}  ↓${dlMbps}MB/s  ↑${ulKbps}KB/s  ETA ${eta}`);
 		}
 	}
 

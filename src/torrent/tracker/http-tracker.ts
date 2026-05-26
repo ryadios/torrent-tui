@@ -73,10 +73,11 @@ async function announceToTracker(
 
 	const fullUrl = url.includes("?") ? `${url}&${params}` : `${url}?${params}`;
 
-	const res = await fetch(fullUrl, {
-		headers: { "User-Agent": "torrent-tui/0.1" },
-		signal: AbortSignal.timeout(10_000),
-	});
+	// AbortSignal.timeout doesn't abort TCP-level hangs in Bun — use Promise.race
+	const res = await Promise.race([
+		fetch(fullUrl, { headers: { "User-Agent": "torrent-tui/0.1" } }),
+		new Promise<never>((_, rej) => setTimeout(() => rej(new Error("The operation timed out.")), 10_000)),
+	]);
 
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -111,46 +112,32 @@ async function announceToTracker(
 	return [];
 }
 
-export async function announce(
+export async function announceHTTP(
 	metadata: TorrentMetadata,
 	port = 6881,
 	numwant = 50,
-): Promise<TrackerResponse> {
+): Promise<PeerInfo[]> {
 	const peerId = getPeerId();
-	const httpTrackers = metadata.announceList
-		.flat()
-		.filter((u) => u.startsWith("http://") || u.startsWith("https://"));
+	const urls = [...new Set(
+		metadata.announceList.flat().filter((u) => u.startsWith("http://") || u.startsWith("https://")),
+	)];
 
-	const uniqueTrackers = [...new Set(httpTrackers)];
 	const results = await Promise.allSettled(
-		uniqueTrackers.map((url) =>
-			announceToTracker(url, metadata, peerId, port, numwant),
-		),
+		urls.map((u) => announceToTracker(u, metadata, peerId, port, numwant)),
 	);
 
-	const seen = new Set<string>();
 	const peers: PeerInfo[] = [];
-	let successCount = 0;
-
 	for (let i = 0; i < results.length; i++) {
-		const result = results[i];
-		const url = uniqueTrackers[i];
-		if (result === undefined || url === undefined) continue;
-		if (result.status === "fulfilled") {
-			successCount++;
-			for (const peer of result.value) {
-				const key = `${peer.ip}:${peer.port}`;
-				if (!seen.has(key)) {
-					seen.add(key);
-					peers.push(peer);
-				}
-			}
+		const r = results[i];
+		const url = urls[i];
+		if (r === undefined || url === undefined) continue;
+		if (r.status === "fulfilled") {
+			peers.push(...r.value);
+			log("tracker", `${url}   ${r.value.length} peers`);
 		} else {
-			log("tracker", `${url}   failed  ${result.reason}`);
+			const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+			log("tracker", `${url}   failed  ${reason}`);
 		}
 	}
-
-	log("tracker", `${successCount} / ${uniqueTrackers.length} HTTP trackers responded   ${peers.length} unique peers`);
-
-	return { complete: 0, incomplete: 0, interval: 1800, peers };
+	return peers;
 }

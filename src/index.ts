@@ -46,7 +46,7 @@ async function loadTorrent(torrentPath: string) {
 
 async function runVerify(torrentPath: string): Promise<void> {
 	const { log } = await import("./torrent/metadata");
-	const { announce } = await import("./torrent/tracker/http-tracker");
+	const { announce } = await import("./torrent/tracker/announce");
 	const { metadata, session, downloadPath } = await loadTorrent(torrentPath);
 
 	metadata.logSummary();
@@ -79,7 +79,7 @@ async function runVerify(torrentPath: string): Promise<void> {
 }
 
 async function runHandshake(torrentPath: string): Promise<void> {
-	const { announce } = await import("./torrent/tracker/http-tracker");
+	const { announce } = await import("./torrent/tracker/announce");
 	const { PeerManager } = await import("./torrent/peer/manager");
 	const { getPeerId, peerIdToString } = await import("./torrent/peer/peer-id");
 	const { metadata, session } = await loadTorrent(torrentPath);
@@ -141,7 +141,7 @@ async function runHandshake(torrentPath: string): Promise<void> {
 }
 
 async function runDownload(torrentPath: string): Promise<void> {
-	const { announce } = await import("./torrent/tracker/http-tracker");
+	const { announce } = await import("./torrent/tracker/announce");
 	const { PeerManager } = await import("./torrent/peer/manager");
 	const { getPeerId, peerIdToString } = await import("./torrent/peer/peer-id");
 	const { metadata, session } = await loadTorrent(torrentPath);
@@ -169,6 +169,10 @@ async function runDownload(torrentPath: string): Promise<void> {
 		return;
 	}
 
+	const unchoked = manager.getUnchoked().length;
+	log("peers", `${manager.connections.size} connected   ${unchoked} unchoked`);
+
+	manager.startChoking();
 	const downloader = session.download(manager);
 	log("log file", downloader.getLogFilePath());
 	console.log("");

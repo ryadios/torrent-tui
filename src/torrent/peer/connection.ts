@@ -33,6 +33,12 @@ export class PeerConnection extends EventEmitter {
 	piecesBitfield: Uint8Array = new Uint8Array(0);
 	suppressDisconnect = false;
 
+	// Per-peer rate tracking — reset every 10s by PeerManager
+	downloadedThisInterval = 0;
+	uploadedThisInterval = 0;
+	downloadBytesPerSec = 0;
+	uploadBytesPerSec = 0;
+
 	private socket: Socket | null = null;
 	private buf = new MessageBuffer();
 	private handshakeDone = false;
@@ -59,6 +65,7 @@ export class PeerConnection extends EventEmitter {
 			this.settle = (err?: Error) => {
 				if (settled) return;
 				settled = true;
+				clearTimeout(timeout); // clear here so 10s guard stays active until handshake
 				this.settle = undefined;
 				if (err) reject(err);
 				else resolve();
@@ -67,6 +74,8 @@ export class PeerConnection extends EventEmitter {
 			const sock = createConnection({ host: this.address, port: this.port });
 			this.socket = sock;
 
+			// 10s covers both TCP connect AND handshake completion.
+			// Do NOT clear on TCP connect — only clear when promise settles.
 			const timeout = setTimeout(() => {
 				log("timeout", `${this.address}:${this.port}  after ${CONNECT_TIMEOUT_MS / 1000}s`);
 				sock.destroy();
@@ -74,10 +83,9 @@ export class PeerConnection extends EventEmitter {
 			}, CONNECT_TIMEOUT_MS);
 
 			sock.once("connect", () => {
-				clearTimeout(timeout);
 				sock.write(buildHandshake(this.infoHash, getPeerId()));
 				this.resetIdleTimer();
-				// Do NOT resolve here — wait for handshake to complete in onData
+				// Timeout continues running until handshake completes or times out
 			});
 
 			sock.on("data", (chunk: Buffer) => {
@@ -86,9 +94,8 @@ export class PeerConnection extends EventEmitter {
 			});
 
 			sock.once("error", (err) => {
-				clearTimeout(timeout);
 				log("error", `${this.address}:${this.port}  ${err.message}`);
-				this.settle?.(err);
+				this.settle?.(err); // settle() clears timeout
 			});
 
 			sock.once("close", () => {
@@ -164,6 +171,7 @@ export class PeerConnection extends EventEmitter {
 				case MSG.PIECE:
 					if (msg.payload) {
 						const { index, begin, block } = decodePiece(msg.payload);
+						this.downloadedThisInterval += block.length;
 						this.emit("piece", index, begin, block);
 					}
 					break;
@@ -218,6 +226,26 @@ export class PeerConnection extends EventEmitter {
 
 	sendBitfield(bitfield: Uint8Array): void {
 		this.write(encodeMsg({ type: MSG.BITFIELD, payload: bitfield }));
+	}
+
+	sendChoke(): void {
+		this.peerChoked = true;
+		this.write(encodeMsg({ type: MSG.CHOKE }));
+	}
+
+	sendUnchoke(): void {
+		this.peerChoked = false;
+		this.write(encodeMsg({ type: MSG.UNCHOKE }));
+	}
+
+	sendPiece(index: number, begin: number, block: Uint8Array): void {
+		const payload = new Uint8Array(8 + block.length);
+		const view = new DataView(payload.buffer);
+		view.setUint32(0, index);
+		view.setUint32(4, begin);
+		payload.set(block, 8);
+		this.write(encodeMsg({ type: MSG.PIECE, payload }));
+		this.uploadedThisInterval += block.length;
 	}
 
 	private startKeepalive(): void {
