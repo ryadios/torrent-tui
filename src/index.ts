@@ -1,9 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { VERSION } from "./constants";
 import { getPeers } from "./torrent/get_peers";
 
 class CliExit extends Error {}
+
+async function getVersion(): Promise<string> {
+	const pkg = await import("../package.json");
+	return pkg.default.version as string;
+}
 
 function fail(msg: string): never {
 	console.error(msg);
@@ -11,8 +15,9 @@ function fail(msg: string): never {
 	throw new CliExit();
 }
 
-function printHelp(): void {
-	console.log(`torrent-tui ${VERSION}
+async function printHelp(): Promise<void> {
+	const version = await getVersion();
+	console.log(`torrent-tui ${version}
 
 Usage:
   torrent-tui                         Start the terminal UI
@@ -261,12 +266,12 @@ async function main() {
 	const args = process.argv.slice(2);
 
 	if (args.includes("--help") || args.includes("-h")) {
-		printHelp();
+		await printHelp();
 		return;
 	}
 
 	if (args.includes("--version") || args.includes("-v")) {
-		console.log(VERSION);
+		console.log(await getVersion());
 		return;
 	}
 

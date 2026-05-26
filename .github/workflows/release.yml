@@ -40,13 +40,8 @@ jobs:
       - name: Validate version
         run: |
           PACKAGE_VERSION="$(bun -e 'console.log((await import("./package.json")).default.version)')"
-          CONSTANT_VERSION="$(bun -e 'console.log((await import("./src/constants/index.ts")).VERSION)')"
           if [ "$PACKAGE_VERSION" != "${{ inputs.version }}" ]; then
             echo "package.json version $PACKAGE_VERSION does not match input ${{ inputs.version }}"
-            exit 1
-          fi
-          if [ "$CONSTANT_VERSION" != "${{ inputs.version }}" ]; then
-            echo "src/constants version $CONSTANT_VERSION does not match input ${{ inputs.version }}"
             exit 1
           fi
 

@@ -1,5 +1,4 @@
 export const APP_NAME = "torrent-tui";
-export const VERSION = "0.0.1";
 
 export const SIDEBAR_WIDTH = 20;
 
