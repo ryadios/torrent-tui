@@ -1,12 +1,14 @@
 # torrent-tui
 
-**A Bun-powered terminal BitTorrent client.** Add `.torrent` files, manage active downloads, and inspect transfer state from a focused TUI.
+**A terminal BitTorrent client for focused download management.** Add `.torrent` files, track active transfers, and manage sessions from a clean keyboard-driven interface.
 
 [![npm version](https://img.shields.io/npm/v/torrent-tui?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/torrent-tui)
 [![CI](https://img.shields.io/github/actions/workflow/status/ryadios/torrent-tui/ci.yml?branch=main&style=for-the-badge&logo=github)](https://github.com/ryadios/torrent-tui/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/torrent-tui?style=for-the-badge)](./LICENSE)
 
 [Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Configuration](#configuration) · [Development](#development)
+
+![torrent-tui terminal interface](./docs/screenshot.png)
 
 > [!NOTE]
 > `torrent-tui` currently requires [Bun](https://bun.sh). Standalone binaries are planned after the npm CLI release path is stable.
