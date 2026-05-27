@@ -36,6 +36,8 @@ interface VerifyAllSummary {
 	corrupt: number;
 }
 
+type ReadHandleMap = Map<string, number>;
+
 function formatSize(bytes: number): string {
 	const gb = bytes / (1024 * 1024 * 1024);
 	if (gb >= 1) return `${gb.toFixed(1)} GB`;
@@ -96,6 +98,7 @@ export class StorageManager {
 	private readPieceMaybeSync(
 		pieceIndex: number,
 		tolerateMissing: boolean,
+		readHandles?: ReadHandleMap,
 	): Buffer | null {
 		const ranges = this.metadata.pieceToFileRanges(pieceIndex);
 		const isLastPiece = pieceIndex === this.metadata.pieceCount - 1;
@@ -112,7 +115,7 @@ export class StorageManager {
 				if (tolerateMissing) return null;
 				throw new Error(`Missing file: ${fullPath}`);
 			}
-			const fd = openSync(fullPath, "r");
+			const { fd, owned } = this.getReadHandle(fullPath, readHandles);
 			try {
 				const bytesRead = readSync(fd, result, written, length, fileOffset);
 				if (bytesRead !== length) {
@@ -120,7 +123,9 @@ export class StorageManager {
 					throw new Error(`Short read: ${fullPath}`);
 				}
 			} finally {
-				closeSync(fd);
+				if (owned) {
+					closeSync(fd);
+				}
 			}
 			written += length;
 		}
@@ -178,12 +183,54 @@ export class StorageManager {
 		let missing = 0;
 		let corrupt = 0;
 		let lastYield = Date.now();
+		const readHandles: ReadHandleMap = new Map();
 		this.downloadedPieces.clear();
 
-		for (let i = 0; i < this.metadata.pieceCount; i++) {
-			const data = this.readPieceMaybeSync(i, tolerateMissing);
-			if (!data) {
-				missing++;
+		try {
+			for (let i = 0; i < this.metadata.pieceCount; i++) {
+				const data = this.readPieceMaybeSync(i, tolerateMissing, readHandles);
+				if (!data) {
+					missing++;
+					options.onProgress?.(i + 1, valid, missing, corrupt);
+					if (
+						(i + 1) % yieldEveryPieces === 0 ||
+						Date.now() - lastYield >= yieldEveryMs
+					) {
+						await yieldToEventLoop();
+						lastYield = Date.now();
+					}
+					continue;
+				}
+
+				if (isAllZero(data)) {
+					missing++;
+					options.onProgress?.(i + 1, valid, missing, corrupt);
+					if (
+						(i + 1) % yieldEveryPieces === 0 ||
+						Date.now() - lastYield >= yieldEveryMs
+					) {
+						await yieldToEventLoop();
+						lastYield = Date.now();
+					}
+					continue;
+				}
+
+				const expected = this.metadata.pieceHashes[i];
+				if (!expected) {
+					corrupt++;
+					continue;
+				}
+
+				const actual = new SHA1()
+					.update(data)
+					.digest() as unknown as Uint8Array;
+				if (bufEqual(actual, expected)) {
+					valid++;
+					this.downloadedPieces.add(i);
+				} else {
+					corrupt++;
+				}
+
 				options.onProgress?.(i + 1, valid, missing, corrupt);
 				if (
 					(i + 1) % yieldEveryPieces === 0 ||
@@ -192,44 +239,9 @@ export class StorageManager {
 					await yieldToEventLoop();
 					lastYield = Date.now();
 				}
-				continue;
 			}
-
-			if (isAllZero(data)) {
-				missing++;
-				options.onProgress?.(i + 1, valid, missing, corrupt);
-				if (
-					(i + 1) % yieldEveryPieces === 0 ||
-					Date.now() - lastYield >= yieldEveryMs
-				) {
-					await yieldToEventLoop();
-					lastYield = Date.now();
-				}
-				continue;
-			}
-
-			const expected = this.metadata.pieceHashes[i];
-			if (!expected) {
-				corrupt++;
-				continue;
-			}
-
-			const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
-			if (bufEqual(actual, expected)) {
-				valid++;
-				this.downloadedPieces.add(i);
-			} else {
-				corrupt++;
-			}
-
-			options.onProgress?.(i + 1, valid, missing, corrupt);
-			if (
-				(i + 1) % yieldEveryPieces === 0 ||
-				Date.now() - lastYield >= yieldEveryMs
-			) {
-				await yieldToEventLoop();
-				lastYield = Date.now();
-			}
+		} finally {
+			this.closeReadHandles(readHandles);
 		}
 
 		log(
@@ -266,6 +278,31 @@ export class StorageManager {
 			}
 		}
 		return bitfield;
+	}
+
+	private getReadHandle(
+		fullPath: string,
+		readHandles?: ReadHandleMap,
+	): { fd: number; owned: boolean } {
+		if (!readHandles) {
+			return { fd: openSync(fullPath, "r"), owned: true };
+		}
+
+		const cached = readHandles.get(fullPath);
+		if (cached !== undefined) {
+			return { fd: cached, owned: false };
+		}
+
+		const fd = openSync(fullPath, "r");
+		readHandles.set(fullPath, fd);
+		return { fd, owned: false };
+	}
+
+	private closeReadHandles(readHandles: ReadHandleMap): void {
+		for (const fd of readHandles.values()) {
+			closeSync(fd);
+		}
+		readHandles.clear();
 	}
 }
 
