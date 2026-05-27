@@ -1,16 +1,40 @@
 import {
+	closeSync,
 	existsSync,
+	ftruncateSync,
 	mkdirSync,
 	openSync,
-	closeSync,
-	ftruncateSync,
 	readSync,
 	writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { SHA1 } from "bun";
-import { log } from "./metadata.ts";
 import type { TorrentMetadata } from "./metadata.ts";
+import { log } from "./metadata.ts";
+
+interface StorageSetupSummary {
+	createdFiles: number;
+	existingFiles: number;
+	allFilesCreated: boolean;
+}
+
+interface VerifyAllOptions {
+	tolerateMissing?: boolean;
+	yieldEveryPieces?: number;
+	yieldEveryMs?: number;
+	onProgress?: (
+		checked: number,
+		valid: number,
+		missing: number,
+		corrupt: number,
+	) => void;
+}
+
+interface VerifyAllSummary {
+	valid: number;
+	missing: number;
+	corrupt: number;
+}
 
 function formatSize(bytes: number): string {
 	const gb = bytes / (1024 * 1024 * 1024);
@@ -31,7 +55,10 @@ export class StorageManager {
 		this.downloadPath = basePath;
 	}
 
-	async setup(): Promise<void> {
+	async setup(): Promise<StorageSetupSummary> {
+		let createdFiles = 0;
+		let existingFiles = 0;
+
 		for (const file of this.metadata.files) {
 			const fullPath = join(this.downloadPath, file.path);
 			const dir = dirname(fullPath);
@@ -43,11 +70,19 @@ export class StorageManager {
 				const fd = openSync(fullPath, "w");
 				ftruncateSync(fd, file.length);
 				closeSync(fd);
+				createdFiles++;
 				log("storage", `created   ${fullPath}  (${formatSize(file.length)})`);
 			} else {
+				existingFiles++;
 				log("storage", `exists    ${fullPath}  (${formatSize(file.length)})`);
 			}
 		}
+
+		return {
+			createdFiles,
+			existingFiles,
+			allFilesCreated: this.metadata.files.length > 0 && existingFiles === 0,
+		};
 	}
 
 	readPieceSync(pieceIndex: number): Buffer {
@@ -58,7 +93,10 @@ export class StorageManager {
 		return data;
 	}
 
-	private readPieceMaybeSync(pieceIndex: number, tolerateMissing: boolean): Buffer | null {
+	private readPieceMaybeSync(
+		pieceIndex: number,
+		tolerateMissing: boolean,
+	): Buffer | null {
 		const ranges = this.metadata.pieceToFileRanges(pieceIndex);
 		const isLastPiece = pieceIndex === this.metadata.pieceCount - 1;
 		const pieceLen = isLastPiece
@@ -132,27 +170,49 @@ export class StorageManager {
 	}
 
 	// Opens each file once and reads through it sequentially — no per-piece open/close.
-	async verifyAll(options: { tolerateMissing?: boolean } = {}): Promise<{ valid: number; missing: number; corrupt: number }> {
+	async verifyAll(options: VerifyAllOptions = {}): Promise<VerifyAllSummary> {
 		const tolerateMissing = options.tolerateMissing ?? false;
+		const yieldEveryPieces = options.yieldEveryPieces ?? 8;
+		const yieldEveryMs = options.yieldEveryMs ?? 16;
 		let valid = 0;
 		let missing = 0;
 		let corrupt = 0;
+		let lastYield = Date.now();
 		this.downloadedPieces.clear();
 
 		for (let i = 0; i < this.metadata.pieceCount; i++) {
 			const data = this.readPieceMaybeSync(i, tolerateMissing);
 			if (!data) {
 				missing++;
+				options.onProgress?.(i + 1, valid, missing, corrupt);
+				if (
+					(i + 1) % yieldEveryPieces === 0 ||
+					Date.now() - lastYield >= yieldEveryMs
+				) {
+					await yieldToEventLoop();
+					lastYield = Date.now();
+				}
 				continue;
 			}
 
 			if (isAllZero(data)) {
 				missing++;
+				options.onProgress?.(i + 1, valid, missing, corrupt);
+				if (
+					(i + 1) % yieldEveryPieces === 0 ||
+					Date.now() - lastYield >= yieldEveryMs
+				) {
+					await yieldToEventLoop();
+					lastYield = Date.now();
+				}
 				continue;
 			}
 
 			const expected = this.metadata.pieceHashes[i];
-			if (!expected) { corrupt++; continue; }
+			if (!expected) {
+				corrupt++;
+				continue;
+			}
 
 			const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
 			if (bufEqual(actual, expected)) {
@@ -161,9 +221,21 @@ export class StorageManager {
 			} else {
 				corrupt++;
 			}
+
+			options.onProgress?.(i + 1, valid, missing, corrupt);
+			if (
+				(i + 1) % yieldEveryPieces === 0 ||
+				Date.now() - lastYield >= yieldEveryMs
+			) {
+				await yieldToEventLoop();
+				lastYield = Date.now();
+			}
 		}
 
-		log("verify", `${this.metadata.pieceCount} pieces checked   ${valid} valid   ${missing} missing   ${corrupt} corrupt`);
+		log(
+			"verify",
+			`${this.metadata.pieceCount} pieces checked   ${valid} valid   ${missing} missing   ${corrupt} corrupt`,
+		);
 		return { valid, missing, corrupt };
 	}
 
@@ -210,4 +282,8 @@ function bufEqual(a: Uint8Array, b: Uint8Array): boolean {
 		if (a[i] !== b[i]) return false;
 	}
 	return true;
+}
+
+function yieldToEventLoop(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 0));
 }

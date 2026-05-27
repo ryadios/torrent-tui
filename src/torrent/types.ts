@@ -18,8 +18,12 @@ export interface FileInfo {
 
 export type TorrentStatus =
 	| "created"
-	| "verifying"
+	| "checking"
 	| "ready"
+	| "connecting"
 	| "downloading"
 	| "seeding"
+	| "stalled"
+	| "paused"
+	| "error"
 	| "stopped";
