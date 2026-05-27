@@ -9,16 +9,33 @@ export type TorrentUiStatus =
 	| "stopped"
 	| "error";
 
+export interface TorrentFileState {
+	path: string;
+	length: number;
+}
+
+export interface TorrentPeerState {
+	address: string;
+	client: string;
+	pieces: number;
+	choked: boolean;
+	downloadBps: number;
+	uploadBps: number;
+}
+
 export interface TorrentState {
 	id: string;
 	name: string;
 	totalSize: number;
+	pieceLength: number;
 	downloadedPieces: number;
 	totalPieces: number;
 	status: TorrentUiStatus;
 	downloadBps: number;
 	uploadBps: number;
 	peers: number;
+	peerDetails: TorrentPeerState[];
+	files: TorrentFileState[];
 	etaSeconds: number | null;
 }
 

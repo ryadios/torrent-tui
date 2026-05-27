@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getPeers } from "./torrent/get_peers";
 
 class CliExit extends Error {}
 
@@ -21,7 +20,7 @@ async function printHelp(): Promise<void> {
 
 Usage:
   torrent-tui                         Start the terminal UI
-  torrent-tui <file.torrent>          Announce and print peers
+  torrent-tui <file.torrent>          Start the TUI and add the torrent
   torrent-tui <file.torrent> --verify Verify local pieces and trackers
   torrent-tui <file.torrent> --handshake
                                       Connect to peers and print handshake summary
@@ -299,18 +298,15 @@ async function main() {
 			return;
 		}
 
-		try {
-			await getPeers(torrentPath, 6881, 50);
-		} catch (e) {
-			fail(`Error: ${e instanceof Error ? e.message : e}`);
-		}
-
+		const { App } = await import("./app");
+		const app = new App();
+		await app.start(torrentPath);
 		return;
 	}
 
 	const { App } = await import("./app");
 	const app = new App();
-	app.start();
+	await app.start();
 }
 
 main().catch((err: unknown) => {

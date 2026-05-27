@@ -34,7 +34,7 @@ export class App {
 	private layout!: LayoutDimensions;
 	private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	async start(): Promise<void> {
+	async start(initialTorrentPath?: string): Promise<void> {
 		const config = loadConfig();
 
 		this.renderer = await createCliRenderer({ exitOnCtrlC: true });
@@ -62,6 +62,7 @@ export class App {
 			this.store,
 			this.sidebar,
 			this.contentWindow,
+			this.statusBar,
 			this.toastManager,
 		);
 		// Wire ConfirmDialog — callbacks are set inside the controller setter
@@ -111,12 +112,17 @@ export class App {
 			}, 0);
 		};
 
-		this.store.subscribe((state) => {
-			this.statusBar.update(state);
-		});
-
 		await this.bridge.restoreSession();
 		this.controller.start();
+		void this.bridge.verifyTrustedRestores();
+
+		if (initialTorrentPath) {
+			const filename =
+				initialTorrentPath.split("/").pop() ?? initialTorrentPath;
+			setTimeout(() => {
+				this.addTorrentInBackground(initialTorrentPath, filename);
+			}, 0);
+		}
 
 		this.renderer.on("resize", (width: number, height: number) => {
 			this.handleResize(width, height);

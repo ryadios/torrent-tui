@@ -2,6 +2,7 @@ import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import type { AppState } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
+import type { FocusArea } from "./content-window";
 
 function formatSpeed(bps: number): string {
 	if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} MB/s`;
@@ -26,29 +27,35 @@ export class StatusBar {
 		this.renderer.root.add(this.container);
 	}
 
-	update(state: AppState): void {
+	update(state: AppState, focusArea: FocusArea = "sidebar"): void {
 		const theme = getTheme();
 		const dl = formatSpeed(state.totalDownloadBps);
 		const ul = formatSpeed(state.totalUploadBps);
 		const count = state.torrents.length;
-		const status = count === 0 ? "idle" : `${count} torrent${count !== 1 ? "s" : ""}`;
+		const status =
+			count === 0 ? "idle" : `${count} torrent${count !== 1 ? "s" : ""}`;
 
 		(this.leftText as unknown as { content: string }).content =
 			` ↓ ${dl}  ↑ ${ul}  |  ${status}`;
 		(this.leftText as unknown as { fg: string }).fg = theme.fgPrimary;
 
 		(this.rightText as unknown as { content: string }).content =
-			"Tab focus  Space pause  d del  D del+files  a add  q quit ";
+			this.hintsFor(focusArea);
 		(this.rightText as unknown as { fg: string }).fg = theme.fgMuted;
 	}
 
 	updateLayout(layout: LayoutDimensions): void {
 		this.layout = layout;
 		(this.container as unknown as { top: number }).top = layout.statusBar.y;
-		(this.container as unknown as { width: number }).width = layout.statusBar.width;
+		(this.container as unknown as { width: number }).width =
+			layout.statusBar.width;
 	}
 
-	private build(): { container: BoxRenderable; leftText: TextRenderable; rightText: TextRenderable } {
+	private build(): {
+		container: BoxRenderable;
+		leftText: TextRenderable;
+		rightText: TextRenderable;
+	} {
 		const theme = getTheme();
 
 		const container = new BoxRenderable(this.renderer, {
@@ -75,5 +82,16 @@ export class StatusBar {
 		container.add(rightText);
 
 		return { container, leftText, rightText };
+	}
+
+	private hintsFor(focusArea: FocusArea): string {
+		switch (focusArea) {
+			case "sidebar":
+				return "j/k nav  Tab focus  a add  q quit ";
+			case "table":
+				return "j/k select  Space action  d del  D del+files  Tab focus ";
+			case "details":
+				return "h/l tabs  j/k scroll  Tab focus  q quit ";
+		}
 	}
 }

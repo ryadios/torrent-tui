@@ -65,6 +65,7 @@ The package also exposes a few command-line checks around the same torrent engin
 ```bash
 torrent-tui --help
 torrent-tui --version
+torrent-tui file.torrent
 torrent-tui file.torrent --verify
 torrent-tui file.torrent --handshake
 torrent-tui file.torrent --download
@@ -73,7 +74,7 @@ torrent-tui file.torrent --download
 | Command | Description |
 | --- | --- |
 | `torrent-tui` | Start the terminal UI. |
-| `torrent-tui <file.torrent>` | Announce to trackers and print peers. |
+| `torrent-tui <file.torrent>` | Start the TUI and add the torrent. |
 | `torrent-tui <file.torrent> --verify` | Create storage and verify local pieces. |
 | `torrent-tui <file.torrent> --handshake` | Connect to peers and print a connection summary. |
 | `torrent-tui <file.torrent> --download` | Run the downloader without launching the TUI. |

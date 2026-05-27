@@ -3,6 +3,7 @@ import { APP_NAME, SIDEBAR_ITEMS } from "../constants";
 import type { AppState, Store } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
+import type { FocusArea } from "./content-window";
 
 interface SidebarItem {
 	text: TextRenderable;
@@ -25,7 +26,7 @@ export class Sidebar {
 		this.renderer.root.add(this.container);
 	}
 
-	update(state?: AppState, focusArea: "sidebar" | "table" = "sidebar"): void {
+	update(state?: AppState, focusArea: FocusArea = "sidebar"): void {
 		const s = state ?? this.store.getState();
 		const theme = getTheme();
 		const sidebarActive = focusArea === "sidebar";
@@ -39,7 +40,9 @@ export class Sidebar {
 			(item.text as unknown as { content: string }).content =
 				`${isSelected && sidebarActive ? "> " : "  "}${itemName}`;
 			(item.text as unknown as { fg: string }).fg = isSelected
-				? (sidebarActive ? theme.accent : theme.fgSecondary)
+				? sidebarActive
+					? theme.accent
+					: theme.fgSecondary
 				: theme.fgPrimary;
 		}
 	}
