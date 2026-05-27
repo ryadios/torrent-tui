@@ -1,15 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AppSettings } from "../config/settings";
 import type { Store, TorrentState } from "../store";
 import { getDataDir, resolvePath } from "../utils/paths";
-import { TorrentMetadata } from "./metadata";
+import { writeJsonAtomic } from "../utils/json";
+import { TorrentMetadata, log } from "./metadata";
 import { decode } from "./parser";
 import type { BencodeValue } from "./parser";
 import { TorrentSession } from "./session";
 import { announce } from "./tracker/announce";
 import { PeerManager } from "./peer/manager";
 import type { Downloader } from "./downloader";
+import { StorageManager } from "./storage";
 
 interface TorrentEntry {
 	torrentPath: string;
@@ -20,6 +22,7 @@ interface TorrentEntry {
 }
 
 interface SessionRegistry {
+	schemaVersion: number;
 	torrents: Array<{ infoHash: string; torrentPath: string }>;
 }
 
@@ -40,12 +43,14 @@ export class TorrentBridge {
 		const registryPath = this.registryPath();
 		if (!existsSync(registryPath)) return;
 
-		let registry: SessionRegistry;
+		let registry: Partial<SessionRegistry>;
 		try {
-			registry = JSON.parse(readFileSync(registryPath, "utf-8")) as SessionRegistry;
+			registry = JSON.parse(readFileSync(registryPath, "utf-8")) as Partial<SessionRegistry>;
 		} catch {
 			return;
 		}
+
+		if (!Array.isArray(registry.torrents)) return;
 
 		for (const { infoHash, torrentPath } of registry.torrents) {
 			if (!existsSync(torrentPath)) continue;
@@ -54,8 +59,16 @@ export class TorrentBridge {
 				const actualId = Buffer.from(metadata.infoHash).toString("hex");
 				if (actualId !== infoHash) continue;
 
-				const downloadedPieces = this.loadResumeCount(infoHash);
-				const status = downloadedPieces >= metadata.pieceCount ? "seeding" : "stopped";
+				const resumeCount = this.loadResumeCount(infoHash);
+				const storage = new StorageManager(metadata, this.downloadPath);
+				const summary = await storage.verifyAll({ tolerateMissing: true });
+				const downloadedPieces = storage.downloadedCount;
+				const status: TorrentState["status"] =
+					downloadedPieces === metadata.pieceCount
+						? "seeding"
+						: downloadedPieces < resumeCount || summary.corrupt > 0
+							? "error"
+							: "stopped";
 				const entry: TorrentEntry = {
 					torrentPath,
 					session: null,
@@ -75,6 +88,7 @@ export class TorrentBridge {
 					},
 				};
 				this.torrents.set(infoHash, entry);
+				log("restore", `${metadata.name}   ${downloadedPieces}/${metadata.pieceCount} pieces   ${status}`);
 			} catch {
 				// skip invalid/unreadable torrent files
 			}
@@ -264,17 +278,11 @@ export class TorrentBridge {
 	}
 
 	private saveRegistry(): void {
-		const dir = getDataDir();
-		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 		const entries = [...this.torrents.entries()].map(([infoHash, entry]) => ({
 			infoHash,
 			torrentPath: entry.torrentPath,
 		}));
-		try {
-			writeFileSync(this.registryPath(), JSON.stringify({ torrents: entries }, null, 2), "utf-8");
-		} catch {
-			// non-fatal
-		}
+		writeJsonAtomic(this.registryPath(), { schemaVersion: 1, torrents: entries });
 	}
 
 	private updateEntry(id: string, partial: Partial<TorrentState>): void {

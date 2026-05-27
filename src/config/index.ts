@@ -1,7 +1,9 @@
 // Config loader - reads from ~/.config/torrent-tui/settings.json
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { getConfigDir, getConfigPath } from "../utils/paths";
+import { existsSync, readFileSync } from "node:fs";
+import { getConfigPath } from "../utils/paths";
+import { writeJsonAtomic } from "../utils/json";
+import { log } from "../torrent/metadata";
 import { type AppSettings, DEFAULT_SETTINGS, settingsSchema } from "./settings";
 
 const SETTINGS_FILE = "settings.json";
@@ -24,18 +26,14 @@ export function loadConfig(): AppSettings {
 			return result.data;
 		}
 
+		log("config", "invalid settings file — using defaults");
 		return { ...DEFAULT_SETTINGS };
 	} catch {
+		log("config", "could not read settings file — using defaults");
 		return { ...DEFAULT_SETTINGS };
 	}
 }
 
 export function saveConfig(settings: AppSettings): void {
-	try {
-		mkdirSync(getConfigDir(), { recursive: true });
-		const configPath = getConfigPath(SETTINGS_FILE);
-		writeFileSync(configPath, JSON.stringify(settings, null, 2), "utf-8");
-	} catch {
-		// Silently fail
-	}
+	writeJsonAtomic(getConfigPath(SETTINGS_FILE), settings);
 }

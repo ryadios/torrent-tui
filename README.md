@@ -102,6 +102,31 @@ Resume data is stored under:
 ${XDG_DATA_HOME:-~/.local/share}/torrent-tui/resume
 ```
 
+The session registry is stored at:
+
+```text
+${XDG_DATA_HOME:-~/.local/share}/torrent-tui/session.json
+```
+
+It keeps the list of torrents the TUI should restore on startup.
+
+### What Each Setting Does
+
+| Setting | Purpose | When it applies |
+| --- | --- | --- |
+| `downloadPath` | Where torrent payload files are written and verified. | On torrent add, resume, verify, and startup restore. |
+| `torrentFolder` | Folder shown by the add-torrent dialog. | When you open the add dialog. |
+| `maxConnections` | Maximum number of peers the client will connect to per torrent. | During peer discovery and download. |
+
+### Tuning Tips
+
+- Use a fast local SSD for `downloadPath` if you want quicker verification and fewer stalls on reopen.
+- Point `torrentFolder` at the directory where you keep `.torrent` files so adding torrents is faster.
+- Lower `maxConnections` if your network or CPU struggles with many peers; raise it if you want more parallel peer selection.
+- Settings are read when the app starts. If you edit `settings.json` manually, restart the app to pick up the changes.
+- If the settings file is invalid, torrent-tui falls back to defaults and logs a config warning.
+- `session.json` and the resume files are rewritten automatically as torrent state changes, so you normally do not need to edit them by hand.
+
 ## Status
 
 `0.0.1` is a basic release intended for early CLI usage.
