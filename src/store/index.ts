@@ -1,10 +1,21 @@
+export type TorrentUiStatus =
+	| "queued"
+	| "checking"
+	| "connecting"
+	| "downloading"
+	| "stalled"
+	| "paused"
+	| "seeding"
+	| "stopped"
+	| "error";
+
 export interface TorrentState {
 	id: string;
 	name: string;
 	totalSize: number;
 	downloadedPieces: number;
 	totalPieces: number;
-	status: "verifying" | "downloading" | "paused" | "seeding" | "stopped" | "error";
+	status: TorrentUiStatus;
 	downloadBps: number;
 	uploadBps: number;
 	peers: number;

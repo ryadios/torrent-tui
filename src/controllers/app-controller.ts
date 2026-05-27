@@ -39,7 +39,7 @@ export class AppController {
 			const pendingDeleteId = this.pendingDeleteId;
 			if (pendingDeleteId) {
 				this.runTorrentAction("remove torrent", () =>
-					this.onRemoveTorrent?.(pendingDeleteId, true)
+					this.onRemoveTorrent?.(pendingDeleteId, true),
 				);
 				this.pendingDeleteId = null;
 			}
@@ -89,7 +89,10 @@ export class AppController {
 		this.contentWindow.update(this.focusArea, this.tableSelectedIndex);
 	}
 
-	private runTorrentAction(label: string, action: () => Promise<void> | void): void {
+	private runTorrentAction(
+		label: string,
+		action: () => Promise<void> | void,
+	): void {
 		Promise.resolve()
 			.then(action)
 			.catch((err: unknown) => {
@@ -104,7 +107,11 @@ export class AppController {
 
 	private getSelectedId(): string | null {
 		const state = this.store.getState();
-		return filterTorrents(state.torrents, state.selectedView)[this.tableSelectedIndex]?.id ?? null;
+		return (
+			filterTorrents(state.torrents, state.selectedView)[
+				this.tableSelectedIndex
+			]?.id ?? null
+		);
 	}
 
 	private handleKeyPress(key: KeyEvent): void {
@@ -137,12 +144,18 @@ export class AppController {
 				const total = SIDEBAR_ITEMS.status.length;
 				const state = this.store.getState();
 				const next = (state.selectedIndex + 1) % total;
-				this.store.setState({ selectedIndex: next, selectedView: SIDEBAR_ITEMS.status[next] ?? "All" });
+				this.store.setState({
+					selectedIndex: next,
+					selectedView: SIDEBAR_ITEMS.status[next] ?? "All",
+				});
 			} else {
 				const state = this.store.getState();
 				const len = filterTorrents(state.torrents, state.selectedView).length;
 				if (len > 0) {
-					this.tableSelectedIndex = Math.min(this.tableSelectedIndex + 1, len - 1);
+					this.tableSelectedIndex = Math.min(
+						this.tableSelectedIndex + 1,
+						len - 1,
+					);
 					this.refreshView();
 				}
 			}
@@ -151,7 +164,10 @@ export class AppController {
 				const total = SIDEBAR_ITEMS.status.length;
 				const state = this.store.getState();
 				const prev = (state.selectedIndex - 1 + total) % total;
-				this.store.setState({ selectedIndex: prev, selectedView: SIDEBAR_ITEMS.status[prev] ?? "All" });
+				this.store.setState({
+					selectedIndex: prev,
+					selectedView: SIDEBAR_ITEMS.status[prev] ?? "All",
+				});
 			} else {
 				if (this.tableSelectedIndex > 0) {
 					this.tableSelectedIndex--;
@@ -163,20 +179,35 @@ export class AppController {
 				const id = this.getSelectedId();
 				if (!id) return;
 				const state = this.store.getState();
-				const torrent = filterTorrents(state.torrents, state.selectedView)[this.tableSelectedIndex];
+				const torrent = filterTorrents(state.torrents, state.selectedView)[
+					this.tableSelectedIndex
+				];
 				if (!torrent) return;
 				if (torrent.status === "downloading") {
-					this.runTorrentAction("pause torrent", () => this.onPauseTorrent?.(id));
+					this.runTorrentAction("pause torrent", () =>
+						this.onPauseTorrent?.(id),
+					);
 				} else if (torrent.status === "paused") {
-					this.runTorrentAction("resume torrent", () => this.onResumeTorrent?.(id));
-				} else if (torrent.status === "stopped") {
-					this.runTorrentAction("start torrent", () => this.onStartTorrent?.(id));
+					this.runTorrentAction("resume torrent", () =>
+						this.onResumeTorrent?.(id),
+					);
+				} else if (
+					torrent.status === "stopped" ||
+					torrent.status === "stalled" ||
+					torrent.status === "error"
+				) {
+					this.runTorrentAction("start torrent", () =>
+						this.onStartTorrent?.(id),
+					);
 				}
 			}
 		} else if (key.name === "d" && !key.shift) {
 			if (this.focusArea === "table") {
 				const id = this.getSelectedId();
-				if (id) this.runTorrentAction("remove torrent", () => this.onRemoveTorrent?.(id, false));
+				if (id)
+					this.runTorrentAction("remove torrent", () =>
+						this.onRemoveTorrent?.(id, false),
+					);
 			}
 		} else if (key.name === "d" && key.shift) {
 			if (this.focusArea === "table") {

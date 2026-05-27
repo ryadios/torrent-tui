@@ -101,32 +101,14 @@ export class App {
 			this.bridge.removeTorrent(id, deleteFiles);
 		};
 
-		this.addDialog.onSelect = async (filePath) => {
+		this.addDialog.onSelect = (filePath) => {
 			this.controller.focusMode = "global";
 			const filename = filePath.split("/").pop() ?? filePath;
-			this.toastManager.show({
-				id: `add-${Date.now()}`,
-				type: "info",
-				title: "Adding torrent",
-				message: filename,
-			});
+			this.renderer.requestRender();
 
-			try {
-				await this.bridge.addTorrent(filePath);
-				this.toastManager.show({
-					id: `added-${Date.now()}`,
-					type: "success",
-					title: "Download started",
-					message: filename,
-				});
-			} catch (err) {
-				this.toastManager.show({
-					id: `err-${Date.now()}`,
-					type: "error",
-					title: "Failed to add",
-					message: err instanceof Error ? err.message : String(err),
-				});
-			}
+			setTimeout(() => {
+				this.addTorrentInBackground(filePath, filename);
+			}, 0);
 		};
 
 		this.store.subscribe((state) => {
@@ -153,5 +135,39 @@ export class App {
 			this.addDialog.updateLayout(this.layout);
 			this.confirmDialog.updateLayout(this.layout);
 		}, 100);
+	}
+
+	private async addTorrentInBackground(
+		filePath: string,
+		filename: string,
+	): Promise<void> {
+		try {
+			const result = await this.bridge.addTorrent(filePath);
+			this.toastManager.show({
+				id: `added-${Date.now()}`,
+				type: result.added ? "success" : "info",
+				title: result.added ? "Torrent added" : "Torrent already added",
+				message: result.name || filename,
+			});
+			this.renderer.requestRender();
+
+			if (result.added) {
+				this.bridge.startTorrent(result.id).catch((err: unknown) => {
+					this.toastManager.show({
+						id: `start-err-${Date.now()}`,
+						type: "error",
+						title: "Failed to start",
+						message: err instanceof Error ? err.message : String(err),
+					});
+				});
+			}
+		} catch (err) {
+			this.toastManager.show({
+				id: `err-${Date.now()}`,
+				type: "error",
+				title: "Failed to add",
+				message: err instanceof Error ? err.message : String(err),
+			});
+		}
 	}
 }

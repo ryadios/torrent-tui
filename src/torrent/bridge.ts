@@ -2,16 +2,16 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AppSettings } from "../config/settings";
 import type { Store, TorrentState } from "../store";
-import { getDataDir, resolvePath } from "../utils/paths";
 import { writeJsonAtomic } from "../utils/json";
-import { TorrentMetadata, log } from "./metadata";
-import { decode } from "./parser";
-import type { BencodeValue } from "./parser";
-import { TorrentSession } from "./session";
-import { announce } from "./tracker/announce";
-import { PeerManager } from "./peer/manager";
+import { getDataDir, resolvePath } from "../utils/paths";
 import type { Downloader } from "./downloader";
+import { log, TorrentMetadata } from "./metadata";
+import type { BencodeValue } from "./parser";
+import { decode } from "./parser";
+import { PeerManager } from "./peer/manager";
+import { TorrentSession } from "./session";
 import { StorageManager } from "./storage";
+import { announce } from "./tracker/announce";
 
 interface TorrentEntry {
 	torrentPath: string;
@@ -24,6 +24,12 @@ interface TorrentEntry {
 interface SessionRegistry {
 	schemaVersion: number;
 	torrents: Array<{ infoHash: string; torrentPath: string }>;
+}
+
+export interface AddTorrentResult {
+	id: string;
+	name: string;
+	added: boolean;
 }
 
 export class TorrentBridge {
@@ -45,7 +51,9 @@ export class TorrentBridge {
 
 		let registry: Partial<SessionRegistry>;
 		try {
-			registry = JSON.parse(readFileSync(registryPath, "utf-8")) as Partial<SessionRegistry>;
+			registry = JSON.parse(
+				readFileSync(registryPath, "utf-8"),
+			) as Partial<SessionRegistry>;
 		} catch {
 			return;
 		}
@@ -88,7 +96,10 @@ export class TorrentBridge {
 					},
 				};
 				this.torrents.set(infoHash, entry);
-				log("restore", `${metadata.name}   ${downloadedPieces}/${metadata.pieceCount} pieces   ${status}`);
+				log(
+					"restore",
+					`${metadata.name}   ${downloadedPieces}/${metadata.pieceCount} pieces   ${status}`,
+				);
 			} catch {
 				// skip invalid/unreadable torrent files
 			}
@@ -97,11 +108,11 @@ export class TorrentBridge {
 		this.flushAll();
 	}
 
-	async addTorrent(torrentPath: string): Promise<void> {
+	async addTorrent(torrentPath: string): Promise<AddTorrentResult> {
 		const metadata = this.parseTorrent(torrentPath);
 		const id = Buffer.from(metadata.infoHash).toString("hex");
 
-		if (this.torrents.has(id)) return;
+		if (this.torrents.has(id)) return { id, name: metadata.name, added: false };
 
 		const entry: TorrentEntry = {
 			torrentPath,
@@ -114,7 +125,7 @@ export class TorrentBridge {
 				totalSize: metadata.totalSize,
 				downloadedPieces: 0,
 				totalPieces: metadata.pieceCount,
-				status: "stopped",
+				status: "queued",
 				downloadBps: 0,
 				uploadBps: 0,
 				peers: 0,
@@ -125,7 +136,7 @@ export class TorrentBridge {
 		this.saveRegistry();
 		this.flushAll();
 
-		await this.runDownload(id, metadata);
+		return { id, name: metadata.name, added: true };
 	}
 
 	async startTorrent(id: string): Promise<void> {
@@ -139,7 +150,11 @@ export class TorrentBridge {
 		const entry = this.torrents.get(id);
 		if (!entry?.downloader || entry.state.status !== "downloading") return;
 		entry.downloader.pause();
-		this.updateEntry(id, { status: "paused", downloadBps: 0, etaSeconds: null });
+		this.updateEntry(id, {
+			status: "paused",
+			downloadBps: 0,
+			etaSeconds: null,
+		});
 	}
 
 	async resumeTorrent(id: string): Promise<void> {
@@ -160,9 +175,14 @@ export class TorrentBridge {
 			try {
 				const metadata = this.parseTorrent(entry.torrentPath);
 				if (metadata.files.length === 1 && metadata.files[0]) {
-					rmSync(join(this.downloadPath, metadata.files[0].path), { force: true });
+					rmSync(join(this.downloadPath, metadata.files[0].path), {
+						force: true,
+					});
 				} else {
-					rmSync(join(this.downloadPath, metadata.name), { recursive: true, force: true });
+					rmSync(join(this.downloadPath, metadata.name), {
+						recursive: true,
+						force: true,
+					});
 				}
 			} catch {
 				// ignore deletion errors
@@ -180,20 +200,77 @@ export class TorrentBridge {
 			entry.manager?.close();
 		}
 		this.torrents.clear();
-		this.store.setState({ torrents: [], totalDownloadBps: 0, totalUploadBps: 0 });
+		this.store.setState({
+			torrents: [],
+			totalDownloadBps: 0,
+			totalUploadBps: 0,
+		});
 	}
 
-	private async runDownload(id: string, metadata: TorrentMetadata): Promise<void> {
+	private async runDownload(
+		id: string,
+		metadata: TorrentMetadata,
+	): Promise<void> {
 		const entry = this.torrents.get(id);
 		if (!entry) return;
 
 		const session = new TorrentSession(metadata, this.downloadPath);
 		entry.session = session;
 
-		this.updateEntry(id, { status: "verifying" });
+		session.on("status", (next: string) => {
+			if (!this.torrents.has(id)) return;
+			if (next === "ready") return;
+			this.updateEntry(id, { status: next as TorrentState["status"] });
+		});
 
-		await session.start();
-		this.updateEntry(id, { downloadedPieces: session.storage.downloadedCount, status: "downloading" });
+		session.on(
+			"checking",
+			(_checked: number, _total: number, valid: number) => {
+				if (!this.torrents.has(id)) return;
+				this.updateEntry(id, { downloadedPieces: valid, status: "checking" });
+			},
+		);
+
+		session.on("complete", () => {
+			if (!this.torrents.has(id)) return;
+			this.updateEntry(id, {
+				status: "seeding",
+				downloadBps: 0,
+				etaSeconds: null,
+			});
+		});
+
+		this.updateEntry(id, {
+			status: "checking",
+			downloadBps: 0,
+			uploadBps: 0,
+			etaSeconds: null,
+		});
+
+		try {
+			await session.startWithOptions({
+				verifyYieldEveryPieces: 8,
+				verifyYieldEveryMs: 16,
+			});
+		} catch {
+			entry.session = null;
+			this.updateEntry(id, {
+				status: "error",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
+			return;
+		}
+
+		const complete = session.storage.downloadedCount === metadata.pieceCount;
+		this.updateEntry(id, {
+			downloadedPieces: session.storage.downloadedCount,
+			status: complete ? "seeding" : "connecting",
+			downloadBps: 0,
+			uploadBps: 0,
+			etaSeconds: null,
+		});
 
 		const trackerResult = await announce(metadata).catch(() => null);
 		const peers = trackerResult?.peers ?? [];
@@ -201,11 +278,32 @@ export class TorrentBridge {
 		const manager = new PeerManager(metadata, this.config.maxConnections);
 		entry.manager = manager;
 
-		await manager.start();
-		await manager.connect(peers);
+		try {
+			await manager.start();
+			await manager.connect(peers);
+		} catch {
+			manager.close();
+			entry.manager = null;
+			entry.session = null;
+			this.updateEntry(id, {
+				status: complete ? "seeding" : "stalled",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
+			return;
+		}
 
 		if (manager.connections.size === 0) {
-			this.updateEntry(id, { status: "error" });
+			manager.close();
+			entry.manager = null;
+			entry.session = null;
+			this.updateEntry(id, {
+				status: complete ? "seeding" : "stalled",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
 			return;
 		}
 
@@ -215,7 +313,6 @@ export class TorrentBridge {
 			this.updateEntry(id, { peers: manager.connections.size });
 		});
 
-		// Attach listeners BEFORE session.download() — for already-complete torrents
 		session.on("progress", (dl: number, _total: number, speed: number) => {
 			if (!this.torrents.has(id)) return;
 			const uploadBps = [...manager.connections.values()].reduce(
@@ -223,7 +320,10 @@ export class TorrentBridge {
 				0,
 			);
 			const remaining = metadata.pieceCount - dl;
-			const etaSeconds = speed > 0 ? Math.round((remaining * metadata.pieceLength) / speed) : null;
+			const etaSeconds =
+				speed > 0
+					? Math.round((remaining * metadata.pieceLength) / speed)
+					: null;
 			this.updateEntry(id, {
 				downloadedPieces: dl,
 				downloadBps: Math.round(speed),
@@ -231,16 +331,6 @@ export class TorrentBridge {
 				etaSeconds,
 				peers: manager.connections.size,
 			});
-		});
-
-		session.on("status", (next: string) => {
-			if (!this.torrents.has(id)) return;
-			this.updateEntry(id, { status: next as TorrentState["status"] });
-		});
-
-		session.on("complete", () => {
-			if (!this.torrents.has(id)) return;
-			this.updateEntry(id, { status: "seeding", downloadBps: 0, etaSeconds: null });
 		});
 
 		manager.startChoking();
@@ -266,7 +356,9 @@ export class TorrentBridge {
 		const path = join(getDataDir(), "resume", `${infoHash}.json`);
 		if (!existsSync(path)) return 0;
 		try {
-			const data = JSON.parse(readFileSync(path, "utf-8")) as { downloadedPieces?: number[] };
+			const data = JSON.parse(readFileSync(path, "utf-8")) as {
+				downloadedPieces?: number[];
+			};
 			return data.downloadedPieces?.length ?? 0;
 		} catch {
 			return 0;
@@ -282,7 +374,10 @@ export class TorrentBridge {
 			infoHash,
 			torrentPath: entry.torrentPath,
 		}));
-		writeJsonAtomic(this.registryPath(), { schemaVersion: 1, torrents: entries });
+		writeJsonAtomic(this.registryPath(), {
+			schemaVersion: 1,
+			torrents: entries,
+		});
 	}
 
 	private updateEntry(id: string, partial: Partial<TorrentState>): void {

@@ -110,6 +110,24 @@ ${XDG_DATA_HOME:-~/.local/share}/torrent-tui/session.json
 
 It keeps the list of torrents the TUI should restore on startup.
 
+### Torrent States
+
+The TUI shows detailed per-torrent states while keeping the sidebar filters simple.
+
+| State | Meaning |
+| --- | --- |
+| `Queued` | The `.torrent` was accepted and is waiting for engine startup. |
+| `Checking` | Local files are being checked against torrent piece hashes. |
+| `Connecting` | Trackers were contacted and the client is connecting to peers. |
+| `Downloading` | Pieces are actively being requested or received. |
+| `Stalled` | The torrent is incomplete but has no usable peers right now. Press `Space` to retry. |
+| `Paused` | The active downloader was paused by the user. |
+| `Seeding` | All pieces are present and the torrent can upload to peers. |
+| `Stopped` | The torrent is saved in the session but not running. |
+| `Error` | Startup, storage, or torrent metadata handling failed. |
+
+The `Downloading` sidebar filter includes queued, checking, connecting, downloading, and stalled torrents so active work stays grouped together.
+
 ### What Each Setting Does
 
 | Setting | Purpose | When it applies |
@@ -123,6 +141,8 @@ It keeps the list of torrents the TUI should restore on startup.
 - Use a fast local SSD for `downloadPath` if you want quicker verification and fewer stalls on reopen.
 - Point `torrentFolder` at the directory where you keep `.torrent` files so adding torrents is faster.
 - Lower `maxConnections` if your network or CPU struggles with many peers; raise it if you want more parallel peer selection.
+- Fresh torrents skip full zero-file verification. Existing files are checked cooperatively, so the TUI should stay responsive during large rechecks.
+- If a torrent stays `Stalled`, the client did not find a usable peer. Try again later with `Space`, or check tracker availability.
 - Settings are read when the app starts. If you edit `settings.json` manually, restart the app to pick up the changes.
 - If the settings file is invalid, torrent-tui falls back to defaults and logs a config warning.
 - `session.json` and the resume files are rewritten automatically as torrent state changes, so you normally do not need to edit them by hand.

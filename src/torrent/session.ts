@@ -1,9 +1,15 @@
 import { EventEmitter } from "node:events";
-import { TorrentMetadata, log } from "./metadata.ts";
-import { StorageManager } from "./storage.ts";
 import { Downloader } from "./downloader.ts";
-import type { TorrentStatus } from "./types.ts";
+import type { TorrentMetadata } from "./metadata.ts";
 import type { PeerManager } from "./peer/manager.ts";
+import { StorageManager } from "./storage.ts";
+import type { TorrentStatus } from "./types.ts";
+
+export interface SessionStartOptions {
+	skipVerify?: boolean;
+	verifyYieldEveryPieces?: number;
+	verifyYieldEveryMs?: number;
+}
 
 export class TorrentSession extends EventEmitter {
 	readonly metadata: TorrentMetadata;
@@ -25,9 +31,21 @@ export class TorrentSession extends EventEmitter {
 	}
 
 	async start(): Promise<void> {
-		this.transition("verifying");
-		await this.storage.setup();
-		await this.storage.verifyAll();
+		return this.startWithOptions();
+	}
+
+	async startWithOptions(options: SessionStartOptions = {}): Promise<void> {
+		this.transition("checking");
+		const setup = await this.storage.setup();
+		if (!options.skipVerify && !setup.allFilesCreated) {
+			await this.storage.verifyAll({
+				yieldEveryPieces: options.verifyYieldEveryPieces,
+				yieldEveryMs: options.verifyYieldEveryMs,
+				onProgress: (checked: number, valid: number) => {
+					this.emit("checking", checked, this.metadata.pieceCount, valid);
+				},
+			});
+		}
 		this.transition("ready");
 	}
 
@@ -40,8 +58,12 @@ export class TorrentSession extends EventEmitter {
 			this.downloadPath,
 		);
 
-		downloader.on("piece:verified", (i: number) => this.emit("piece:verified", i));
-		downloader.on("piece:failed", (i: number, peer: string) => this.emit("piece:failed", i, peer));
+		downloader.on("piece:verified", (i: number) =>
+			this.emit("piece:verified", i),
+		);
+		downloader.on("piece:failed", (i: number, peer: string) =>
+			this.emit("piece:failed", i, peer),
+		);
 		downloader.on("progress", (dl: number, total: number, speed: number) =>
 			this.emit("progress", dl, total, speed),
 		);
