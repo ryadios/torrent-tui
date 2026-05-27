@@ -2,6 +2,7 @@ import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import type { TorrentState } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
+import type { FocusArea } from "./content-window";
 
 const PREFIX_W = 2;
 const SUFFIX_W = 3;
@@ -134,7 +135,7 @@ export class TorrentTable {
 
 	private lastTorrents: TorrentState[] = [];
 	private lastSelectedIndex = 0;
-	private lastFocusArea: "sidebar" | "table" = "sidebar";
+	private lastFocusArea: FocusArea = "sidebar";
 
 	constructor(renderer: CliRenderer, layout: LayoutDimensions) {
 		this.renderer = renderer;
@@ -152,19 +153,20 @@ export class TorrentTable {
 	update(
 		torrents: TorrentState[],
 		selectedIndex: number,
-		focusArea: "sidebar" | "table",
+		focusArea: FocusArea,
 	): void {
-		this.lastTorrents = torrents;
+		const visibleTorrents = torrents.slice(0, this.maxVisibleRows());
+		this.lastTorrents = visibleTorrents;
 		this.lastSelectedIndex = selectedIndex;
 		this.lastFocusArea = focusArea;
 
-		if (torrents.length !== this.rows.length) {
-			this.rebuildRows(torrents.length);
+		if (visibleTorrents.length !== this.rows.length) {
+			this.rebuildRows(visibleTorrents.length);
 		}
 
-		for (let i = 0; i < torrents.length; i++) {
+		for (let i = 0; i < visibleTorrents.length; i++) {
 			const row = this.rows[i];
-			const torrent = torrents[i];
+			const torrent = visibleTorrents[i];
 			if (!row || !torrent) continue;
 			this.updateRow(
 				row,
@@ -350,5 +352,9 @@ export class TorrentTable {
 		container.add(spacer);
 
 		return { container, headerText };
+	}
+
+	private maxVisibleRows(): number {
+		return Math.max(0, Math.floor((this.layout.content.height - 2) / 2));
 	}
 }

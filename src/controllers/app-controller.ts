@@ -1,24 +1,37 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { SIDEBAR_ITEMS } from "../constants";
 import type { ConfirmDialog } from "../layout/confirm-dialog";
-import type { ContentWindow } from "../layout/content-window";
+import type { ContentWindow, FocusArea } from "../layout/content-window";
+import {
+	type DetailTab,
+	getDetailMaxScrollOffset,
+} from "../layout/detail-panel";
 import type { Sidebar } from "../layout/sidebar";
+import type { StatusBar } from "../layout/status-bar";
 import type { ToastManager } from "../layout/toast-manager";
 import type { Store } from "../store";
 import { filterTorrents } from "../utils/filter";
 
 type FocusMode = "global" | "dialog";
-type FocusArea = "sidebar" | "table";
+const DETAIL_TABS: DetailTab[] = ["Pieces", "Peers", "Files"];
 
 export class AppController {
 	private renderer: CliRenderer;
 	private store: Store;
 	private sidebar: Sidebar;
 	private contentWindow: ContentWindow;
+	private statusBar: StatusBar;
 	private toastManager: ToastManager;
 	focusMode: FocusMode = "global";
 	focusArea: FocusArea = "sidebar";
 	private tableSelectedIndex = 0;
+	private detailTabIndex = 0;
+	private detailScrollOffsets: Record<DetailTab, number> = {
+		Pieces: 0,
+		Peers: 0,
+		Files: 0,
+	};
+	private lastDetailTorrentId: string | null = null;
 	private pendingDeleteId: string | null = null;
 
 	// Injected by App after bridge/dialog are created
@@ -55,12 +68,14 @@ export class AppController {
 		store: Store,
 		sidebar: Sidebar,
 		contentWindow: ContentWindow,
+		statusBar: StatusBar,
 		toastManager: ToastManager,
 	) {
 		this.renderer = renderer;
 		this.store = store;
 		this.sidebar = sidebar;
 		this.contentWindow = contentWindow;
+		this.statusBar = statusBar;
 		this.toastManager = toastManager;
 	}
 
@@ -72,8 +87,15 @@ export class AppController {
 			} else if (len === 0) {
 				this.tableSelectedIndex = 0;
 			}
+			this.syncDetailState();
 			this.sidebar.update(state, this.focusArea);
-			this.contentWindow.update(this.focusArea, this.tableSelectedIndex);
+			this.contentWindow.update(
+				this.focusArea,
+				this.tableSelectedIndex,
+				this.getDetailTab(),
+				this.getDetailScrollOffset(),
+			);
+			this.statusBar.update(state, this.focusArea);
 		});
 
 		this.renderer.keyInput.on("keypress", (key) => {
@@ -86,7 +108,13 @@ export class AppController {
 	private refreshView(): void {
 		const state = this.store.getState();
 		this.sidebar.update(state, this.focusArea);
-		this.contentWindow.update(this.focusArea, this.tableSelectedIndex);
+		this.contentWindow.update(
+			this.focusArea,
+			this.tableSelectedIndex,
+			this.getDetailTab(),
+			this.getDetailScrollOffset(),
+		);
+		this.statusBar.update(state, this.focusArea);
 	}
 
 	private runTorrentAction(
@@ -114,6 +142,72 @@ export class AppController {
 		);
 	}
 
+	private getDetailTab(): DetailTab {
+		return DETAIL_TABS[this.detailTabIndex] ?? "Pieces";
+	}
+
+	private moveDetailTab(delta: number): void {
+		this.detailTabIndex =
+			(this.detailTabIndex + delta + DETAIL_TABS.length) % DETAIL_TABS.length;
+		this.refreshView();
+	}
+
+	private getDetailScrollOffset(): number {
+		return this.detailScrollOffsets[this.getDetailTab()] ?? 0;
+	}
+
+	private setDetailScrollOffset(offset: number): void {
+		this.detailScrollOffsets[this.getDetailTab()] = offset;
+	}
+
+	private resetDetailScrollOffsets(): void {
+		this.detailScrollOffsets = {
+			Pieces: 0,
+			Peers: 0,
+			Files: 0,
+		};
+	}
+
+	private getSelectedTorrent() {
+		const state = this.store.getState();
+		return (
+			filterTorrents(state.torrents, state.selectedView)[
+				this.tableSelectedIndex
+			] ?? null
+		);
+	}
+
+	private syncDetailState(): void {
+		const torrentId = this.getSelectedTorrent()?.id ?? null;
+		if (torrentId !== this.lastDetailTorrentId) {
+			this.lastDetailTorrentId = torrentId;
+			this.resetDetailScrollOffsets();
+		}
+		const maxOffset = getDetailMaxScrollOffset(
+			this.getSelectedTorrent(),
+			this.getDetailTab(),
+			this.contentWindow.getDetailBodyRowCount(),
+		);
+		this.setDetailScrollOffset(
+			Math.max(0, Math.min(this.getDetailScrollOffset(), maxOffset)),
+		);
+	}
+
+	private moveDetailScroll(delta: number): void {
+		const maxOffset = getDetailMaxScrollOffset(
+			this.getSelectedTorrent(),
+			this.getDetailTab(),
+			this.contentWindow.getDetailBodyRowCount(),
+		);
+		const nextOffset = Math.max(
+			0,
+			Math.min(this.getDetailScrollOffset() + delta, maxOffset),
+		);
+		if (nextOffset === this.getDetailScrollOffset()) return;
+		this.setDetailScrollOffset(nextOffset);
+		this.refreshView();
+	}
+
 	private handleKeyPress(key: KeyEvent): void {
 		if (this.focusMode === "dialog") {
 			if (this._confirmDialog?.getIsOpen()) {
@@ -133,10 +227,37 @@ export class AppController {
 			return;
 		}
 
-		if (key.name === "tab") {
-			this.focusArea = this.focusArea === "sidebar" ? "table" : "sidebar";
+		if (key.shift && key.name === "tab") {
+			this.focusArea = this.previousFocusArea();
 			this.refreshView();
 			return;
+		}
+
+		if (key.name === "tab") {
+			this.focusArea = this.nextFocusArea();
+			this.refreshView();
+			return;
+		}
+
+		if (this.focusArea === "details") {
+			if (
+				key.name === "h" ||
+				key.name === "[" ||
+				key.name === "leftbracket" ||
+				key.name === "left"
+			) {
+				this.moveDetailTab(-1);
+				return;
+			}
+			if (
+				key.name === "l" ||
+				key.name === "]" ||
+				key.name === "rightbracket" ||
+				key.name === "right"
+			) {
+				this.moveDetailTab(1);
+				return;
+			}
 		}
 
 		if (key.name === "j" || key.name === "down") {
@@ -148,7 +269,7 @@ export class AppController {
 					selectedIndex: next,
 					selectedView: SIDEBAR_ITEMS.status[next] ?? "All",
 				});
-			} else {
+			} else if (this.focusArea === "table") {
 				const state = this.store.getState();
 				const len = filterTorrents(state.torrents, state.selectedView).length;
 				if (len > 0) {
@@ -158,6 +279,8 @@ export class AppController {
 					);
 					this.refreshView();
 				}
+			} else if (this.focusArea === "details") {
+				this.moveDetailScroll(1);
 			}
 		} else if (key.name === "k" || key.name === "up") {
 			if (this.focusArea === "sidebar") {
@@ -168,11 +291,13 @@ export class AppController {
 					selectedIndex: prev,
 					selectedView: SIDEBAR_ITEMS.status[prev] ?? "All",
 				});
-			} else {
+			} else if (this.focusArea === "table") {
 				if (this.tableSelectedIndex > 0) {
 					this.tableSelectedIndex--;
 					this.refreshView();
 				}
+			} else if (this.focusArea === "details") {
+				this.moveDetailScroll(-1);
 			}
 		} else if (key.name === "space") {
 			if (this.focusArea === "table") {
@@ -222,6 +347,28 @@ export class AppController {
 			this.onAddTorrent?.();
 		} else if (key.name === "q") {
 			this.onQuit?.();
+		}
+	}
+
+	private nextFocusArea(): FocusArea {
+		switch (this.focusArea) {
+			case "sidebar":
+				return "table";
+			case "table":
+				return "details";
+			case "details":
+				return "sidebar";
+		}
+	}
+
+	private previousFocusArea(): FocusArea {
+		switch (this.focusArea) {
+			case "sidebar":
+				return "details";
+			case "table":
+				return "sidebar";
+			case "details":
+				return "table";
 		}
 	}
 }
