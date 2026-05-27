@@ -51,20 +51,39 @@ export class StorageManager {
 	}
 
 	readPieceSync(pieceIndex: number): Buffer {
+		const data = this.readPieceMaybeSync(pieceIndex, false);
+		if (!data) {
+			throw new Error(`Unable to read piece ${pieceIndex}`);
+		}
+		return data;
+	}
+
+	private readPieceMaybeSync(pieceIndex: number, tolerateMissing: boolean): Buffer | null {
 		const ranges = this.metadata.pieceToFileRanges(pieceIndex);
 		const isLastPiece = pieceIndex === this.metadata.pieceCount - 1;
 		const pieceLen = isLastPiece
 			? this.metadata.totalSize - pieceIndex * this.metadata.pieceLength
 			: this.metadata.pieceLength;
 
-		const result = Buffer.allocUnsafe(pieceLen);
+		const result = Buffer.alloc(pieceLen);
 		let written = 0;
 
 		for (const { file, fileOffset, length } of ranges) {
 			const fullPath = join(this.downloadPath, file.path);
+			if (!existsSync(fullPath)) {
+				if (tolerateMissing) return null;
+				throw new Error(`Missing file: ${fullPath}`);
+			}
 			const fd = openSync(fullPath, "r");
-			readSync(fd, result, written, length, fileOffset);
-			closeSync(fd);
+			try {
+				const bytesRead = readSync(fd, result, written, length, fileOffset);
+				if (bytesRead !== length) {
+					if (tolerateMissing) return null;
+					throw new Error(`Short read: ${fullPath}`);
+				}
+			} finally {
+				closeSync(fd);
+			}
 			written += length;
 		}
 
@@ -82,8 +101,14 @@ export class StorageManager {
 		for (const { file, fileOffset, length } of ranges) {
 			const fullPath = join(this.downloadPath, file.path);
 			const fd = openSync(fullPath, "r+");
-			writeSync(fd, data, offset, length, fileOffset);
-			closeSync(fd);
+			try {
+				const bytesWritten = writeSync(fd, data, offset, length, fileOffset);
+				if (bytesWritten !== length) {
+					throw new Error(`Short write: ${fullPath}`);
+				}
+			} finally {
+				closeSync(fd);
+			}
 			offset += length;
 		}
 
@@ -98,7 +123,8 @@ export class StorageManager {
 		const expected = this.metadata.pieceHashes[pieceIndex];
 		if (!expected) return false;
 
-		const data = this.readPieceSync(pieceIndex);
+		const data = this.readPieceMaybeSync(pieceIndex, true);
+		if (!data) return false;
 		if (isAllZero(data)) return false;
 
 		const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
@@ -106,28 +132,18 @@ export class StorageManager {
 	}
 
 	// Opens each file once and reads through it sequentially — no per-piece open/close.
-	async verifyAll(): Promise<{ valid: number; missing: number; corrupt: number }> {
+	async verifyAll(options: { tolerateMissing?: boolean } = {}): Promise<{ valid: number; missing: number; corrupt: number }> {
+		const tolerateMissing = options.tolerateMissing ?? false;
 		let valid = 0;
 		let missing = 0;
 		let corrupt = 0;
-
-		const pieceBuf = Buffer.allocUnsafe(this.metadata.pieceLength);
+		this.downloadedPieces.clear();
 
 		for (let i = 0; i < this.metadata.pieceCount; i++) {
-			const isLastPiece = i === this.metadata.pieceCount - 1;
-			const pieceLen = isLastPiece
-				? this.metadata.totalSize - i * this.metadata.pieceLength
-				: this.metadata.pieceLength;
-
-			const data = pieceBuf.subarray(0, pieceLen);
-			let written = 0;
-
-			for (const { file, fileOffset, length } of this.metadata.pieceToFileRanges(i)) {
-				const fullPath = join(this.downloadPath, file.path);
-				const fd = openSync(fullPath, "r");
-				readSync(fd, data, written, length, fileOffset);
-				closeSync(fd);
-				written += length;
+			const data = this.readPieceMaybeSync(i, tolerateMissing);
+			if (!data) {
+				missing++;
+				continue;
 			}
 
 			if (isAllZero(data)) {

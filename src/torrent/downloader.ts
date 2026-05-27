@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SHA1 } from "bun";
 import { log } from "./metadata.ts";
 import { PiecePicker } from "./piece-picker.ts";
 import { getDataDir } from "../utils/paths.ts";
+import { writeJsonAtomic } from "../utils/json";
 import type { TorrentMetadata } from "./metadata.ts";
 import type { StorageManager } from "./storage.ts";
 import type { PeerManager } from "./peer/manager.ts";
@@ -329,16 +330,14 @@ export class Downloader extends EventEmitter {
 
 	private saveResume(): void {
 		const path = this.resumePath();
-		const dir = join(getDataDir(), "resume");
-		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
 		const data = {
+			schemaVersion: 1,
 			infoHash: Buffer.from(this.metadata.infoHash).toString("hex"),
 			downloadPath: this.downloadPath,
 			downloadedPieces: [...this.storage.getDownloadedPieces()],
 			savedAt: Math.floor(Date.now() / 1000),
 		};
-		writeFileSync(path, JSON.stringify(data), "utf-8");
+		writeJsonAtomic(path, data);
 	}
 }
 

@@ -26,18 +26,21 @@ export class AppController {
 	onQuit?: () => void;
 	onDialogClose?: () => void;
 	onDialogInput?: (key: string) => boolean;
-	onPauseTorrent?: (id: string) => void;
-	onResumeTorrent?: (id: string) => void;
-	onStartTorrent?: (id: string) => void;
-	onRemoveTorrent?: (id: string, deleteFiles: boolean) => void;
+	onPauseTorrent?: (id: string) => Promise<void> | void;
+	onResumeTorrent?: (id: string) => Promise<void> | void;
+	onStartTorrent?: (id: string) => Promise<void> | void;
+	onRemoveTorrent?: (id: string, deleteFiles: boolean) => Promise<void> | void;
 
 	private _confirmDialog: ConfirmDialog | null = null;
 	set confirmDialog(dialog: ConfirmDialog) {
 		this._confirmDialog = dialog;
 		dialog.onConfirm = () => {
 			this.focusMode = "global";
-			if (this.pendingDeleteId) {
-				this.onRemoveTorrent?.(this.pendingDeleteId, true);
+			const pendingDeleteId = this.pendingDeleteId;
+			if (pendingDeleteId) {
+				this.runTorrentAction("remove torrent", () =>
+					this.onRemoveTorrent?.(pendingDeleteId, true)
+				);
 				this.pendingDeleteId = null;
 			}
 		};
@@ -84,6 +87,19 @@ export class AppController {
 		const state = this.store.getState();
 		this.sidebar.update(state, this.focusArea);
 		this.contentWindow.update(this.focusArea, this.tableSelectedIndex);
+	}
+
+	private runTorrentAction(label: string, action: () => Promise<void> | void): void {
+		Promise.resolve()
+			.then(action)
+			.catch((err: unknown) => {
+				this.toastManager.show({
+					id: `action-${Date.now()}`,
+					type: "error",
+					title: `Failed to ${label}`,
+					message: err instanceof Error ? err.message : String(err),
+				});
+			});
 	}
 
 	private getSelectedId(): string | null {
@@ -150,17 +166,17 @@ export class AppController {
 				const torrent = filterTorrents(state.torrents, state.selectedView)[this.tableSelectedIndex];
 				if (!torrent) return;
 				if (torrent.status === "downloading") {
-					this.onPauseTorrent?.(id);
+					this.runTorrentAction("pause torrent", () => this.onPauseTorrent?.(id));
 				} else if (torrent.status === "paused") {
-					this.onResumeTorrent?.(id);
+					this.runTorrentAction("resume torrent", () => this.onResumeTorrent?.(id));
 				} else if (torrent.status === "stopped") {
-					this.onStartTorrent?.(id);
+					this.runTorrentAction("start torrent", () => this.onStartTorrent?.(id));
 				}
 			}
 		} else if (key.name === "d" && !key.shift) {
 			if (this.focusArea === "table") {
 				const id = this.getSelectedId();
-				if (id) this.onRemoveTorrent?.(id, false);
+				if (id) this.runTorrentAction("remove torrent", () => this.onRemoveTorrent?.(id, false));
 			}
 		} else if (key.name === "d" && key.shift) {
 			if (this.focusArea === "table") {
