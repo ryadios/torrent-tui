@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SHA1 } from "bun";
 import { log } from "./metadata.ts";
@@ -31,10 +31,6 @@ export class Downloader extends EventEmitter {
 	private bytesThisSecond = 0;
 	private lastSpeedReset = Date.now();
 	private speedBytesPerSec = 0;
-	private uploadBytesPerSec = 0;
-	private progressInterval: ReturnType<typeof setInterval> | null = null;
-	private logFilePath: string;
-	private progressActive = false;
 	private picker!: PiecePicker;
 
 	constructor(
@@ -44,13 +40,7 @@ export class Downloader extends EventEmitter {
 		private downloadPath: string,
 	) {
 		super();
-		const logDir = join(getDataDir(), "logs");
-		if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
-		const hex = Buffer.from(metadata.infoHash).toString("hex");
-		this.logFilePath = join(logDir, `${hex}.log`);
 	}
-
-	getLogFilePath(): string { return this.logFilePath; }
 
 	start(): void {
 		this.picker = new PiecePicker(
@@ -80,30 +70,20 @@ export class Downloader extends EventEmitter {
 			this.wirePeer(conn);
 			if (!conn.amChoked) this.fillPipeline(conn);
 		});
-
-		this.progressInterval = setInterval(() => this.logProgress(), 2_000);
 	}
 
 	stop(): void {
 		this.stopped = true;
-		if (this.progressInterval) clearInterval(this.progressInterval);
-		if (this.progressActive) {
-			process.stdout.write("\n");
-			this.progressActive = false;
-		}
 	}
 
 	pause(): void {
 		if (this.stopped) return;
 		this.paused = true;
-		if (this.progressInterval) clearInterval(this.progressInterval);
-		this.progressInterval = null;
 	}
 
 	resume(): void {
 		if (this.stopped || !this.paused) return;
 		this.paused = false;
-		this.progressInterval = setInterval(() => this.logProgress(), 2_000);
 		for (const conn of this.manager.connections.values()) {
 			if (!conn.amChoked) this.fillPipeline(conn);
 		}
@@ -142,8 +122,6 @@ export class Downloader extends EventEmitter {
 			const piece = this.storage.readPieceSync(index);
 			const block = Buffer.from(piece).subarray(begin, begin + length);
 			conn.sendPiece(index, begin, block);
-			this.uploadBytesPerSec = (this.uploadBytesPerSec + block.length) / 2;
-			log("upload", `piece=${index} block=${begin / 16384}  ${conn.address}:${conn.port}`);
 		});
 
 		conn.on("disconnect", () => {
@@ -189,7 +167,6 @@ export class Downloader extends EventEmitter {
 
 		const total = this.pieceBlockCount(pieceIndex);
 		this.inProgress.set(pieceIndex, { blocks: new Array(total).fill(null), received: 0, total });
-		this.fileLog(`piece ${pieceIndex}  started  ${total} blocks  (avail ${this.picker.availabilityOf(pieceIndex)})`);
 		return { pieceIndex, begin: 0, length: this.blockLength(pieceIndex, 0) };
 	}
 
@@ -206,10 +183,16 @@ export class Downloader extends EventEmitter {
 		this.pendingRequests.get(key)?.delete(reqKey);
 
 		const piece = this.inProgress.get(index);
-		if (!piece) { this.fillPipeline(conn); return; }
+		if (!piece) {
+			this.fillPipeline(conn);
+			return;
+		}
 
 		const blockIdx = begin / BLOCK_SIZE;
-		if (piece.blocks[blockIdx] !== null) { this.fillPipeline(conn); return; }
+		if (piece.blocks[blockIdx] !== null) {
+			this.fillPipeline(conn);
+			return;
+		}
 
 		piece.blocks[blockIdx] = Buffer.from(block);
 		piece.received++;
@@ -236,14 +219,11 @@ export class Downloader extends EventEmitter {
 		if (!expected || !bufEqual(actual, expected)) {
 			const strikes = (this.corruptStrikes.get(key) ?? 0) + 1;
 			this.corruptStrikes.set(key, strikes);
-			this.fileLog(`piece ${index}  FAIL  peer ${conn.peerId.slice(0, 8)}  strike ${strikes}`);
-			this.consolePrint(`  piece       ${index}  FAIL  (${conn.peerId.slice(0, 8)}, strike ${strikes})`);
 
 			if (strikes >= CORRUPT_STRIKE_LIMIT) {
 				this.bannedPeers.add(key);
 				conn.suppressDisconnect = true;
 				conn.destroy();
-				this.consolePrint(`  banned      ${conn.peerId.slice(0, 8)}  (${strikes} corrupt pieces)`);
 			}
 
 			this.emit("piece:failed", index, key);
@@ -254,7 +234,6 @@ export class Downloader extends EventEmitter {
 		// Write to disk
 		this.storage.writePieceSync(index, assembled);
 		this.saveResume();
-		this.fileLog(`piece ${index}  ok`);
 
 		// Broadcast HAVE to all connected peers
 		for (const peer of this.manager.connections.values()) {
@@ -281,7 +260,6 @@ export class Downloader extends EventEmitter {
 
 		if (this.storage.downloadedCount === this.metadata.pieceCount) {
 			this.stop();
-			this.consolePrint(`  complete     ${this.metadata.pieceCount} / ${this.metadata.pieceCount} pieces   ${this.metadata.name}`);
 			this.emit("complete");
 		}
 	}
@@ -316,49 +294,6 @@ export class Downloader extends EventEmitter {
 		return isLastBlock ? pieceLen - blockIdx * BLOCK_SIZE : BLOCK_SIZE;
 	}
 
-	private logProgress(): void {
-		const downloaded = this.storage.downloadedCount;
-		const total = this.metadata.pieceCount;
-		const pct = total > 0 ? downloaded / total : 0;
-		const dlMbps = (this.speedBytesPerSec / (1024 * 1024)).toFixed(1);
-		const ulKbps = (this.uploadBytesPerSec / 1024).toFixed(0);
-		const remaining = total - downloaded;
-		const etaSecs = this.speedBytesPerSec > 0
-			? Math.ceil((remaining * this.metadata.pieceLength) / this.speedBytesPerSec)
-			: 0;
-		const eta = etaSecs > 0
-			? `${Math.floor(etaSecs / 60)}:${String(etaSecs % 60).padStart(2, "0")}`
-			: "--:--";
-
-		const cols = process.stdout.columns ?? 80;
-		const statsStr = `  ${downloaded}/${total} (${(pct * 100).toFixed(1)}%)  ↓${dlMbps}MB/s  ↑${ulKbps}KB/s  ETA ${eta}`;
-		const barWidth = Math.max(8, cols - statsStr.length - 4);
-		const filled = Math.floor(pct * barWidth);
-		const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
-		const line = `  [${bar}]${statsStr}`;
-
-		if (process.stdout.isTTY) {
-			process.stdout.write(`\r${line.padEnd(cols - 1)}`);
-			this.progressActive = true;
-		} else {
-			log("progress", `${downloaded} / ${total}  ↓${dlMbps}MB/s  ↑${ulKbps}KB/s  ETA ${eta}`);
-		}
-	}
-
-	private consolePrint(line: string): void {
-		if (this.progressActive) {
-			const cols = process.stdout.columns ?? 80;
-			process.stdout.write(`\r${" ".repeat(cols - 1)}\r`); // clear progress line
-		}
-		console.log(line);
-		if (this.progressActive) this.logProgress(); // redraw bar
-	}
-
-	private fileLog(message: string): void {
-		const time = new Date().toISOString().slice(11, 19);
-		appendFileSync(this.logFilePath, `[${time}] ${message}\n`);
-	}
-
 	// Resume
 
 	private resumePath(): string {
@@ -387,7 +322,6 @@ export class Downloader extends EventEmitter {
 			// Marking stale resume entries would corrupt the download when files were deleted.
 			const confirmed = data.downloadedPieces.filter((i) => this.storage.hasPiece(i)).length;
 			log("resume", `${confirmed} / ${data.downloadedPieces.length} resume pieces confirmed on disk`);
-			this.fileLog(`resume: ${confirmed} / ${data.downloadedPieces.length} pieces on disk`);
 		} catch {
 			log("resume", "could not read save file — starting fresh");
 		}

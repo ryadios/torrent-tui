@@ -55,6 +55,7 @@ export class TorrentBridge {
 				if (actualId !== infoHash) continue;
 
 				const downloadedPieces = this.loadResumeCount(infoHash);
+				const status = downloadedPieces >= metadata.pieceCount ? "seeding" : "stopped";
 				const entry: TorrentEntry = {
 					torrentPath,
 					session: null,
@@ -66,7 +67,7 @@ export class TorrentBridge {
 						totalSize: metadata.totalSize,
 						downloadedPieces,
 						totalPieces: metadata.pieceCount,
-						status: "stopped",
+						status,
 						downloadBps: 0,
 						uploadBps: 0,
 						peers: 0,

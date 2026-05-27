@@ -202,9 +202,6 @@ async function runDownload(torrentPath: string): Promise<void> {
 	console.log("");
 	const manager = new PeerManager(metadata);
 	await manager.start();
-
-	// connect() now resolves only after each handshake completes —
-	// so all handshake logs finish before the progress bar starts
 	await manager.connect(peers);
 
 	if (manager.connections.size === 0) {
@@ -218,8 +215,6 @@ async function runDownload(torrentPath: string): Promise<void> {
 
 	manager.startChoking();
 	const downloader = session.download(manager);
-	log("log file", downloader.getLogFilePath());
-	console.log("");
 
 	await new Promise<void>((resolve) => {
 		session.on("complete", () => resolve());
