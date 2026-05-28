@@ -22,7 +22,6 @@ export interface ToastConfig {
 export class Toast {
 	private renderer: CliRenderer;
 	private config: ToastConfig;
-	private layout: LayoutDimensions;
 	private x: number;
 	private y: number;
 	private height: number;

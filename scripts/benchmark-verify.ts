@@ -44,16 +44,22 @@ async function runProfile(
 		const { metadata } = createFixture(dir, profile);
 		const storage = new StorageManager(metadata, dir);
 		const loopDelay = createEventLoopDelayMonitor();
+		let elapsedMs = 0;
+		let maxEventLoopDelayMs = 0;
 
 		loopDelay.start();
 		const started = performance.now();
-		const summary = await storage.verifyAll({
-			chunkSizeBytes,
-			yieldEveryPieces: 1,
-			yieldEveryMs: 8,
-		});
-		const elapsedMs = performance.now() - started;
-		const maxEventLoopDelayMs = loopDelay.stop();
+		let summary: Awaited<ReturnType<typeof storage.verifyAll>>;
+		try {
+			summary = await storage.verifyAll({
+				chunkSizeBytes,
+				yieldEveryPieces: 1,
+				yieldEveryMs: 8,
+			});
+		} finally {
+			elapsedMs = performance.now() - started;
+			maxEventLoopDelayMs = loopDelay.stop();
+		}
 		const seconds = elapsedMs / 1000;
 
 		console.log("");

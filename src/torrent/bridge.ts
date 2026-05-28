@@ -614,19 +614,6 @@ export class TorrentBridge {
 		return new TorrentMetadata(decoded as { [key: string]: BencodeValue }, raw);
 	}
 
-	private loadResumeCount(infoHash: string): number {
-		const path = join(getDataDir(), "resume", `${infoHash}.json`);
-		if (!existsSync(path)) return 0;
-		try {
-			const data = JSON.parse(readFileSync(path, "utf-8")) as {
-				downloadedPieces?: number[];
-			};
-			return data.downloadedPieces?.length ?? 0;
-		} catch {
-			return 0;
-		}
-	}
-
 	private registryPath(): string {
 		return join(getDataDir(), "session.json");
 	}

@@ -105,26 +105,33 @@ async function runRound(args: Args): Promise<Record<string, number>> {
 			}
 		});
 
-		await bridge.restoreSession();
-		const restoreReturnMs = performance.now() - started;
-		await waitFor(() => backgroundCompleteMs !== null || !args.stale, 30_000);
-		if (backgroundCompleteMs === null) backgroundCompleteMs = restoreReturnMs;
+		try {
+			await bridge.restoreSession();
+			const restoreReturnMs = performance.now() - started;
+			await waitFor(() => backgroundCompleteMs !== null || !args.stale, 30_000);
+			if (backgroundCompleteMs === null && args.stale) {
+				console.warn("warning: background verification timed out");
+			}
 
-		const cpu = process.cpuUsage(cpuStart);
-		const peaks = sampler.stop();
-		const maxEventLoopDelayMs = loopDelay.stop();
+			const cpu = process.cpuUsage(cpuStart);
+			const peaks = sampler.stop();
+			const maxEventLoopDelayMs = loopDelay.stop();
 
-		return {
-			firstRowMs: firstRowMs ?? restoreReturnMs,
-			allRowsMs: allRowsMs ?? restoreReturnMs,
-			restoreReturnMs,
-			backgroundCompleteMs,
-			cpuUserMs: cpu.user / 1000,
-			cpuSystemMs: cpu.system / 1000,
-			peakRssMiB: peaks.rss / MIB,
-			peakHeapMiB: peaks.heapUsed / MIB,
-			maxEventLoopDelayMs,
-		};
+			return {
+				firstRowMs: firstRowMs ?? restoreReturnMs,
+				allRowsMs: allRowsMs ?? restoreReturnMs,
+				restoreReturnMs,
+				backgroundCompleteMs: backgroundCompleteMs ?? restoreReturnMs,
+				cpuUserMs: cpu.user / 1000,
+				cpuSystemMs: cpu.system / 1000,
+				peakRssMiB: peaks.rss / MIB,
+				peakHeapMiB: peaks.heapUsed / MIB,
+				maxEventLoopDelayMs,
+			};
+		} finally {
+			sampler.stop();
+			loopDelay.stop();
+		}
 	} finally {
 		restoreEnv("HOME", previousHome);
 		restoreEnv("XDG_DATA_HOME", previousXdgDataHome);
@@ -309,7 +316,11 @@ function parseArgs(args: string[]): Args {
 	const parsed: Args = { rounds: 3, stale: false };
 	for (const arg of args) {
 		if (arg.startsWith("--rounds=")) {
-			parsed.rounds = Number(arg.slice("--rounds=".length));
+			const n = Math.floor(Number(arg.slice("--rounds=".length)));
+			if (!Number.isInteger(n) || n <= 0) {
+				throw new Error("--rounds must be a positive integer");
+			}
+			parsed.rounds = n;
 			continue;
 		}
 		if (arg === "--stale") {
