@@ -48,6 +48,9 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Test
+        run: bun test
+
       - name: CLI smoke
         run: |
           chmod +x bin/torrent-tui

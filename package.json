@@ -20,9 +20,11 @@
 		"dev": "bun --watch src/index.ts",
 		"check": "bun src/index.ts --download",
 		"smoke": "bin/torrent-tui --help && bin/torrent-tui --version && if bin/torrent-tui nope.txt; then echo \"Expected invalid torrent path to fail\"; exit 1; fi",
+		"test": "bun test",
+		"test:watch": "bun test --watch",
 		"typecheck": "tsc --noEmit",
 		"check:fix": "biome check --write --unsafe",
-		"release:check": "bun run typecheck && bun publish --dry-run"
+		"release:check": "bun run typecheck && bun test && bun publish --dry-run"
 	},
 	"keywords": [
 		"bittorrent",
