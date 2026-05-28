@@ -1,9 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Store } from "../../src/store/index.ts";
+import { TorrentBridge } from "../../src/torrent/bridge.ts";
 import { Downloader } from "../../src/torrent/downloader.ts";
+import {
+	resumePathForInfoHash,
+	writeResumeData,
+} from "../../src/torrent/resume.ts";
 import { TorrentSession } from "../../src/torrent/session.ts";
-import { StorageManager } from "../../src/torrent/storage.ts";
+import {
+	StorageManager,
+	VerificationCancelledError,
+} from "../../src/torrent/storage.ts";
 import { getDataDir } from "../../src/utils/paths.ts";
 import { splitPieces } from "../helpers/bytes.ts";
 import { FakePeer, FakePeerManager } from "../helpers/fakes.ts";
@@ -81,6 +90,51 @@ describe("StorageManager", () => {
 			expect(Array.from(storage.getBitfield())).toEqual([0b10000000]);
 		});
 	});
+
+	test("yields between verification chunks and can be cancelled", async () => {
+		await withTempDir(async (dir) => {
+			const fixture = singleFileTorrentFixture({
+				content: patternedBytes(256 * 1024),
+				pieceLength: 256 * 1024,
+			});
+			const storage = new StorageManager(fixture.metadata, dir);
+			await storage.setup();
+			storage.writePieceSync(0, fixture.content);
+
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), 0);
+
+			await expect(
+				storage.verifyAll({
+					chunkSizeBytes: 1024,
+					yieldEveryMs: 0,
+					signal: controller.signal,
+				}),
+			).rejects.toBeInstanceOf(VerificationCancelledError);
+			expect(storage.downloadedCount).toBe(0);
+		});
+	});
+
+	test("reverification clears stale downloaded state for corrupt pieces", async () => {
+		await withTempDir(async (dir) => {
+			const fixture = singleFileTorrentFixture();
+			const storage = new StorageManager(fixture.metadata, dir);
+			await storage.setup();
+			const pieces = splitPieces(fixture.content, fixture.metadata.pieceLength);
+			const first = pieces[0];
+			if (!first) throw new Error("missing fixture piece");
+
+			storage.writePieceSync(0, first);
+			expect((await storage.verifyAll()).valid).toBe(1);
+			expect(storage.downloadedCount).toBe(1);
+
+			storage.writePieceSync(0, new Uint8Array([9, 9, 9, 9]));
+			const summary = await storage.verifyAll({ tolerateMissing: true });
+
+			expect(summary).toEqual({ valid: 0, missing: 2, corrupt: 1 });
+			expect(storage.downloadedCount).toBe(0);
+		});
+	});
 });
 
 describe("TorrentSession", () => {
@@ -131,6 +185,148 @@ describe("TorrentSession", () => {
 			expect(events.at(-1)).toEqual({ checked: 3, total: 3, valid: 1 });
 			expect(session.status).toBe("ready");
 			expect(session.storage.downloadedCount).toBe(1);
+		});
+	});
+
+	test("cancelled verification transitions to stopped", async () => {
+		await withTempDir(async (dir) => {
+			const fixture = singleFileTorrentFixture({
+				content: patternedBytes(256 * 1024),
+				pieceLength: 256 * 1024,
+			});
+			const session = new TorrentSession(fixture.metadata, dir);
+			await session.storage.setup();
+			session.storage.writePieceSync(0, fixture.content);
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(), 0);
+
+			await expect(
+				session.startWithOptions({
+					verifyChunkSizeBytes: 1024,
+					verifyYieldEveryMs: 0,
+					signal: controller.signal,
+				}),
+			).rejects.toBeInstanceOf(VerificationCancelledError);
+
+			expect(session.status).toBe("stopped");
+			expect(session.storage.downloadedCount).toBe(0);
+		});
+	});
+});
+
+describe("TorrentBridge restore", () => {
+	test("trusts matching resume fingerprints without startup verification", async () => {
+		await withIsolatedAppData(async () => {
+			await withTempDir(async (dir) => {
+				const fixture = singleFileTorrentFixture();
+				const storage = new StorageManager(fixture.metadata, dir);
+				await storage.setup();
+				const first = splitPieces(
+					fixture.content,
+					fixture.metadata.pieceLength,
+				)[0];
+				if (!first) throw new Error("missing fixture piece");
+				storage.writePieceSync(0, first);
+				writeResumeData(fixture.metadata, dir, [0]);
+				const torrentPath = writeTorrentAndRegistry(
+					dir,
+					fixture.raw,
+					fixture.metadata,
+				);
+				const store = createTestStore();
+				const bridge = new TorrentBridge(store, {
+					downloadPath: dir,
+					maxConnections: 50,
+					torrentFolder: dir,
+				});
+
+				await bridge.restoreSession();
+
+				expect(torrentPath.endsWith(".torrent")).toBe(true);
+				expect(store.getState().torrents).toHaveLength(1);
+				expect(store.getState().torrents[0]).toMatchObject({
+					downloadedPieces: 1,
+					status: "stopped",
+					totalPieces: 3,
+				});
+			});
+		});
+	});
+
+	test("queues stale resume data for background verification", async () => {
+		await withIsolatedAppData(async () => {
+			await withTempDir(async (dir) => {
+				const fixture = singleFileTorrentFixture();
+				const storage = new StorageManager(fixture.metadata, dir);
+				await storage.setup();
+				writeLegacyResume(fixture.metadata, dir, [0, 1, 2]);
+				writeTorrentAndRegistry(dir, fixture.raw, fixture.metadata);
+				const store = createTestStore();
+				const statuses: string[] = [];
+				store.subscribe((state) => {
+					const status = state.torrents[0]?.status;
+					if (status) statuses.push(status);
+				});
+				const bridge = new TorrentBridge(store, {
+					downloadPath: dir,
+					maxConnections: 50,
+					torrentFolder: dir,
+				});
+
+				await bridge.restoreSession();
+				await waitFor(() => store.getState().torrents[0]?.status === "missing");
+
+				expect(statuses).toContain("checking");
+				expect(store.getState().torrents[0]).toMatchObject({
+					downloadedPieces: 0,
+					status: "missing",
+					totalPieces: 3,
+				});
+			});
+		});
+	});
+
+	test("reopening after payload deletion reports missing instead of error", async () => {
+		await withIsolatedAppData(async () => {
+			await withTempDir(async (dir) => {
+				const fixture = singleFileTorrentFixture();
+				const storage = new StorageManager(fixture.metadata, dir);
+				await storage.setup();
+				const pieces = splitPieces(
+					fixture.content,
+					fixture.metadata.pieceLength,
+				);
+				for (let i = 0; i < pieces.length; i++) {
+					const piece = pieces[i];
+					if (!piece) throw new Error(`missing fixture piece ${i}`);
+					storage.writePieceSync(i, piece);
+				}
+				writeResumeData(
+					fixture.metadata,
+					dir,
+					[0, 1, 2].slice(0, fixture.metadata.pieceCount),
+				);
+				rmSync(join(dir, fixture.metadata.files[0]?.path ?? ""), {
+					force: true,
+				});
+				writeTorrentAndRegistry(dir, fixture.raw, fixture.metadata);
+
+				const store = createTestStore();
+				const bridge = new TorrentBridge(store, {
+					downloadPath: dir,
+					maxConnections: 50,
+					torrentFolder: dir,
+				});
+
+				await bridge.restoreSession();
+				await waitFor(() => store.getState().torrents[0]?.status === "missing");
+
+				expect(store.getState().torrents[0]).toMatchObject({
+					downloadedPieces: 0,
+					status: "missing",
+					totalPieces: 3,
+				});
+			});
 		});
 	});
 });
@@ -246,3 +442,70 @@ describe("Downloader", () => {
 		});
 	});
 });
+
+function patternedBytes(length: number): Uint8Array {
+	const bytes = new Uint8Array(length);
+	for (let i = 0; i < bytes.length; i++) {
+		bytes[i] = (i * 17 + 31) & 0xff;
+	}
+	return bytes;
+}
+
+function createTestStore(): Store {
+	return new Store({
+		selectedIndex: 0,
+		selectedView: "All",
+		torrents: [],
+		totalDownloadBps: 0,
+		totalUploadBps: 0,
+	});
+}
+
+function writeTorrentAndRegistry(
+	dir: string,
+	raw: Uint8Array,
+	metadata: { infoHash: Uint8Array },
+): string {
+	const torrentPath = join(dir, "fixture.torrent");
+	writeFileSync(torrentPath, raw);
+	const infoHash = Buffer.from(metadata.infoHash).toString("hex");
+	const registryDir = getDataDir();
+	mkdirSync(registryDir, { recursive: true });
+	writeFileSync(
+		join(registryDir, "session.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			torrents: [{ infoHash, torrentPath }],
+		}),
+	);
+	return torrentPath;
+}
+
+function writeLegacyResume(
+	metadata: { infoHash: Uint8Array },
+	downloadPath: string,
+	downloadedPieces: number[],
+): void {
+	const infoHash = Buffer.from(metadata.infoHash).toString("hex");
+	mkdirSync(join(getDataDir(), "resume"), { recursive: true });
+	writeFileSync(
+		resumePathForInfoHash(infoHash),
+		JSON.stringify({
+			schemaVersion: 1,
+			infoHash,
+			downloadPath,
+			downloadedPieces,
+			savedAt: 1,
+		}),
+	);
+}
+
+async function waitFor(fn: () => boolean, timeoutMs = 1000): Promise<void> {
+	const started = Date.now();
+	while (!fn()) {
+		if (Date.now() - started > timeoutMs) {
+			throw new Error("timed out waiting for condition");
+		}
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+}

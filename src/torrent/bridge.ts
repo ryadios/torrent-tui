@@ -9,8 +9,13 @@ import { log, TorrentMetadata } from "./metadata";
 import type { BencodeValue } from "./parser";
 import { decode } from "./parser";
 import { PeerManager } from "./peer/manager";
+import {
+	loadTrustedResumeData,
+	readResumeData,
+	writeResumeData,
+} from "./resume";
 import { TorrentSession } from "./session";
-import { StorageManager } from "./storage";
+import { StorageManager, VerificationCancelledError } from "./storage";
 import { announce } from "./tracker/announce";
 
 interface TorrentEntry {
@@ -18,12 +23,22 @@ interface TorrentEntry {
 	session: TorrentSession | null;
 	manager: PeerManager | null;
 	downloader: Downloader | null;
+	checkingAbort: AbortController | null;
+	checkingPromise: Promise<void> | null;
 	state: TorrentState;
 }
 
 interface SessionRegistry {
 	schemaVersion: number;
 	torrents: Array<{ infoHash: string; torrentPath: string }>;
+}
+
+interface RestoreCheckJob {
+	current: number;
+	id: string;
+	metadata: TorrentMetadata;
+	onProgress?: (progress: RestoreProgress) => void;
+	total: number;
 }
 
 export interface RestoreProgress {
@@ -45,7 +60,8 @@ export class TorrentBridge {
 	private store: Store;
 	private config: AppSettings;
 	private torrents: Map<string, TorrentEntry> = new Map();
-	private trustedRestores: string[] = [];
+	private restoreCheckQueue: RestoreCheckJob[] = [];
+	private restoreCheckRunning = false;
 	private pendingFlush = false;
 	private downloadPath: string;
 
@@ -74,7 +90,7 @@ export class TorrentBridge {
 
 		const total = registry.torrents.length;
 		let current = 0;
-		this.trustedRestores = [];
+		this.restoreCheckQueue = [];
 
 		for (const { infoHash, torrentPath } of registry.torrents) {
 			current++;
@@ -84,53 +100,37 @@ export class TorrentBridge {
 				const actualId = Buffer.from(metadata.infoHash).toString("hex");
 				if (actualId !== infoHash) continue;
 
-				const resumeCount = this.loadResumeCount(infoHash);
-				const resumeComplete = resumeCount >= metadata.pieceCount;
-				let downloadedPieces = resumeComplete ? metadata.pieceCount : 0;
-				let status: TorrentState["status"] = resumeComplete
-					? "seeding"
-					: "stopped";
+				const trustedResume = loadTrustedResumeData(
+					metadata,
+					this.downloadPath,
+				);
+				const downloadedPieces = trustedResume?.verifiedPieces.length ?? 0;
+				const resumeComplete = downloadedPieces >= metadata.pieceCount;
 
-				if (!resumeComplete) {
-					const storage = new StorageManager(metadata, this.downloadPath);
-					const summary = await storage.verifyAll({
-						tolerateMissing: true,
-						onProgress: (checked, valid) => {
-							onProgress?.({
-								current,
-								total,
-								name: metadata.name,
-								checkedPieces: checked,
-								totalPieces: metadata.pieceCount,
-								trustedComplete: false,
-							});
-							downloadedPieces = valid;
-						},
-					});
-					downloadedPieces = storage.downloadedCount;
-					status =
-						downloadedPieces === metadata.pieceCount
-							? "seeding"
-							: downloadedPieces < resumeCount || summary.corrupt > 0
-								? "error"
-								: "stopped";
-				} else {
-					this.trustedRestores.push(infoHash);
-					onProgress?.({
-						current,
-						total,
-						name: metadata.name,
-						checkedPieces: metadata.pieceCount,
-						totalPieces: metadata.pieceCount,
-						trustedComplete: true,
-					});
+				if (!trustedResume) {
+					const resumeData = readResumeData(infoHash);
+					const resumeCount =
+						resumeData?.verifiedPieces?.length ??
+						resumeData?.downloadedPieces?.length ??
+						0;
+					if (resumeCount >= metadata.pieceCount) {
+						log("restore", `${metadata.name}   resume data stale; rechecking`);
+					}
 				}
+
+				const finalStatus: TorrentState["status"] = resumeComplete
+					? "seeding"
+					: trustedResume
+						? "stopped"
+						: "checking";
 
 				const entry: TorrentEntry = {
 					torrentPath,
 					session: null,
 					manager: null,
 					downloader: null,
+					checkingAbort: null,
+					checkingPromise: null,
 					state: {
 						id: infoHash,
 						name: metadata.name,
@@ -138,7 +138,7 @@ export class TorrentBridge {
 						pieceLength: metadata.pieceLength,
 						downloadedPieces,
 						totalPieces: metadata.pieceCount,
-						status,
+						status: finalStatus,
 						downloadBps: 0,
 						uploadBps: 0,
 						peers: 0,
@@ -151,9 +151,29 @@ export class TorrentBridge {
 					},
 				};
 				this.torrents.set(infoHash, entry);
+
+				if (!trustedResume) {
+					this.restoreCheckQueue.push({
+						current,
+						id: infoHash,
+						metadata,
+						onProgress,
+						total,
+					});
+				} else {
+					onProgress?.({
+						current,
+						total,
+						name: metadata.name,
+						checkedPieces: metadata.pieceCount,
+						totalPieces: metadata.pieceCount,
+						trustedComplete: true,
+					});
+				}
+
 				log(
 					"restore",
-					`${metadata.name}   ${downloadedPieces}/${metadata.pieceCount} pieces   ${status}`,
+					`${metadata.name}   ${downloadedPieces}/${metadata.pieceCount} pieces   ${finalStatus}`,
 				);
 			} catch {
 				// skip invalid/unreadable torrent files
@@ -161,51 +181,129 @@ export class TorrentBridge {
 		}
 
 		this.flushAll();
+		this.startRestoreCheckQueue();
 	}
 
 	async verifyTrustedRestores(): Promise<void> {
-		const trustedIds = [...this.trustedRestores];
-		this.trustedRestores = [];
+		// Deprecated — verification now runs via restore check queue
+	}
 
-		for (const id of trustedIds) {
-			const entry = this.torrents.get(id);
-			if (!entry) continue;
+	private startRestoreCheckQueue(): void {
+		if (this.restoreCheckRunning) return;
+		this.restoreCheckRunning = true;
+		void this.runRestoreCheckQueue();
+	}
 
-			try {
-				const metadata = this.parseTorrent(entry.torrentPath);
-				const storage = new StorageManager(metadata, this.downloadPath);
-				const summary = await storage.verifyAll({
-					tolerateMissing: true,
-					yieldEveryPieces: 8,
-					yieldEveryMs: 16,
-				});
-				if (
-					summary.valid === metadata.pieceCount &&
-					summary.missing === 0 &&
-					summary.corrupt === 0
-				) {
-					this.updateEntry(id, {
-						downloadedPieces: metadata.pieceCount,
-						status: "seeding",
-					});
-					continue;
-				}
-
-				this.updateEntry(id, {
-					downloadedPieces: summary.valid,
-					status: "error",
-					downloadBps: 0,
-					uploadBps: 0,
-					etaSeconds: null,
-				});
-			} catch {
-				this.updateEntry(id, {
-					status: "error",
-					downloadBps: 0,
-					uploadBps: 0,
-					etaSeconds: null,
-				});
+	private async runRestoreCheckQueue(): Promise<void> {
+		try {
+			while (this.restoreCheckQueue.length > 0) {
+				const job = this.restoreCheckQueue.shift();
+				if (!job || !this.torrents.has(job.id)) continue;
+				await this.runRestoreCheck(job);
 			}
+		} finally {
+			this.restoreCheckRunning = false;
+			if (this.restoreCheckQueue.length > 0) this.startRestoreCheckQueue();
+		}
+	}
+
+	private async runRestoreCheck(job: RestoreCheckJob): Promise<void> {
+		const entry = this.torrents.get(job.id);
+		if (!entry) return;
+
+		const controller = new AbortController();
+		entry.checkingAbort = controller;
+
+		const checkPromise = this.verifyRestoreJob(job, controller);
+		entry.checkingPromise = checkPromise;
+		try {
+			await checkPromise;
+		} finally {
+			const current = this.torrents.get(job.id);
+			if (current?.checkingPromise === checkPromise) {
+				current.checkingAbort = null;
+				current.checkingPromise = null;
+			}
+		}
+	}
+
+	private async verifyRestoreJob(
+		job: RestoreCheckJob,
+		controller: AbortController,
+	): Promise<void> {
+		const storage = new StorageManager(job.metadata, this.downloadPath);
+		try {
+			const resumeData = readResumeData(job.id);
+			const resumeCount =
+				resumeData?.verifiedPieces?.length ??
+				resumeData?.downloadedPieces?.length ??
+				0;
+			const summary = await storage.verifyAll({
+				tolerateMissing: true,
+				signal: controller.signal,
+				onProgress: (checked, valid) => {
+					this.updateEntry(job.id, {
+						downloadedPieces: valid,
+						status: "checking",
+					});
+					job.onProgress?.({
+						current: job.current,
+						total: job.total,
+						name: job.metadata.name,
+						checkedPieces: checked,
+						totalPieces: job.metadata.pieceCount,
+						trustedComplete: false,
+					});
+				},
+			});
+
+			if (summary.corrupt === 0) {
+				writeResumeData(
+					job.metadata,
+					this.downloadPath,
+					storage.getDownloadedPieces(),
+				);
+			}
+
+			const downloadedPieces = storage.downloadedCount;
+			const status =
+				downloadedPieces === job.metadata.pieceCount
+					? "seeding"
+					: summary.missing > 0
+						? "missing"
+						: downloadedPieces < resumeCount || summary.corrupt > 0
+							? "error"
+							: "stopped";
+			this.updateEntry(job.id, {
+				downloadedPieces,
+				status,
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
+			log(
+				"restore",
+				`${job.metadata.name}   ${downloadedPieces}/${job.metadata.pieceCount} pieces   ${status}`,
+			);
+		} catch (err) {
+			if (
+				err instanceof VerificationCancelledError ||
+				controller.signal.aborted
+			) {
+				this.updateEntry(job.id, {
+					status: "stopped",
+					downloadBps: 0,
+					uploadBps: 0,
+					etaSeconds: null,
+				});
+				return;
+			}
+			this.updateEntry(job.id, {
+				status: "error",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
 		}
 	}
 
@@ -220,6 +318,8 @@ export class TorrentBridge {
 			session: null,
 			manager: null,
 			downloader: null,
+			checkingAbort: null,
+			checkingPromise: null,
 			state: {
 				id,
 				name: metadata.name,
@@ -249,6 +349,11 @@ export class TorrentBridge {
 	async startTorrent(id: string): Promise<void> {
 		const entry = this.torrents.get(id);
 		if (!entry || entry.session !== null) return;
+		if (entry.state.status === "checking" && !entry.checkingPromise) return;
+		if (entry.checkingPromise) {
+			await entry.checkingPromise.catch(() => {});
+			if (!this.torrents.has(id)) return;
+		}
 		const metadata = this.parseTorrent(entry.torrentPath);
 		await this.runDownload(id, metadata);
 	}
@@ -275,6 +380,13 @@ export class TorrentBridge {
 		const entry = this.torrents.get(id);
 		if (!entry) return;
 
+		this.restoreCheckQueue = this.restoreCheckQueue.filter(
+			(job) => job.id !== id,
+		);
+		entry.checkingAbort?.abort();
+		if (entry.checkingPromise) {
+			await entry.checkingPromise.catch(() => {});
+		}
 		entry.downloader?.stop();
 		entry.manager?.close();
 
@@ -302,10 +414,15 @@ export class TorrentBridge {
 	}
 
 	async stopAll(): Promise<void> {
+		const checking: Promise<void>[] = [];
+		this.restoreCheckQueue = [];
 		for (const entry of this.torrents.values()) {
+			entry.checkingAbort?.abort();
+			if (entry.checkingPromise) checking.push(entry.checkingPromise);
 			entry.downloader?.stop();
 			entry.manager?.close();
 		}
+		await Promise.allSettled(checking);
 		this.torrents.clear();
 		this.store.setState({
 			torrents: [],
@@ -323,6 +440,8 @@ export class TorrentBridge {
 
 		const session = new TorrentSession(metadata, this.downloadPath);
 		entry.session = session;
+		const checkingAbort = new AbortController();
+		entry.checkingAbort = checkingAbort;
 
 		session.on("status", (next: string) => {
 			if (!this.torrents.has(id)) return;
@@ -355,11 +474,31 @@ export class TorrentBridge {
 		});
 
 		try {
-			await session.startWithOptions({
+			const checkingPromise = session.startWithOptions({
 				verifyYieldEveryPieces: 8,
 				verifyYieldEveryMs: 16,
+				signal: checkingAbort.signal,
 			});
-		} catch {
+			entry.checkingPromise = checkingPromise;
+			await checkingPromise;
+		} catch (err) {
+			entry.checkingAbort = null;
+			entry.checkingPromise = null;
+			if (!this.torrents.has(id)) return;
+			if (
+				err instanceof VerificationCancelledError ||
+				session.status === "stopped" ||
+				checkingAbort.signal.aborted
+			) {
+				entry.session = null;
+				this.updateEntry(id, {
+					status: "stopped",
+					downloadBps: 0,
+					uploadBps: 0,
+					etaSeconds: null,
+				});
+				return;
+			}
 			entry.session = null;
 			this.updateEntry(id, {
 				status: "error",
@@ -369,6 +508,10 @@ export class TorrentBridge {
 			});
 			return;
 		}
+		entry.checkingAbort = null;
+		entry.checkingPromise = null;
+
+		if (!this.torrents.has(id)) return;
 
 		const complete = session.storage.downloadedCount === metadata.pieceCount;
 		this.updateEntry(id, {
@@ -381,6 +524,7 @@ export class TorrentBridge {
 
 		const trackerResult = await announce(metadata).catch(() => null);
 		const peers = trackerResult?.peers ?? [];
+		if (!this.torrents.has(id)) return;
 
 		const manager = new PeerManager(metadata, this.config.maxConnections);
 		entry.manager = manager;
@@ -388,6 +532,10 @@ export class TorrentBridge {
 		try {
 			await manager.start();
 			await manager.connect(peers);
+			if (!this.torrents.has(id)) {
+				manager.close();
+				return;
+			}
 		} catch {
 			manager.close();
 			entry.manager = null;
@@ -464,19 +612,6 @@ export class TorrentBridge {
 			throw new Error("Invalid torrent file");
 		}
 		return new TorrentMetadata(decoded as { [key: string]: BencodeValue }, raw);
-	}
-
-	private loadResumeCount(infoHash: string): number {
-		const path = join(getDataDir(), "resume", `${infoHash}.json`);
-		if (!existsSync(path)) return 0;
-		try {
-			const data = JSON.parse(readFileSync(path, "utf-8")) as {
-				downloadedPieces?: number[];
-			};
-			return data.downloadedPieces?.length ?? 0;
-		} catch {
-			return 0;
-		}
 	}
 
 	private registryPath(): string {

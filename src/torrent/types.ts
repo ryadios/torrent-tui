@@ -26,4 +26,5 @@ export type TorrentStatus =
 	| "stalled"
 	| "paused"
 	| "error"
-	| "stopped";
+	| "stopped"
+	| "missing";

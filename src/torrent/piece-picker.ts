@@ -28,7 +28,10 @@ export class PiecePicker {
 	}
 
 	onHave(pieceIndex: number): void {
-		this.availability.set(pieceIndex, (this.availability.get(pieceIndex) ?? 0) + 1);
+		this.availability.set(
+			pieceIndex,
+			(this.availability.get(pieceIndex) ?? 0) + 1,
+		);
 	}
 
 	// Returns the lowest-availability unstarted piece this peer has that we need.

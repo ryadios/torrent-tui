@@ -29,8 +29,6 @@ export class Toast {
 	private createdAt: number;
 	private dismissed: boolean = false;
 	private addedToRenderer: boolean = false;
-
-	private layout: LayoutDimensions;
 	private container: BoxRenderable;
 	private titleLabel: TextRenderable;
 	private messageLabel: TextRenderable;

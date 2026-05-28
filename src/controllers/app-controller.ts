@@ -319,7 +319,8 @@ export class AppController {
 				} else if (
 					torrent.status === "stopped" ||
 					torrent.status === "stalled" ||
-					torrent.status === "error"
+					torrent.status === "error" ||
+					torrent.status === "missing"
 				) {
 					this.runTorrentAction("start torrent", () =>
 						this.onStartTorrent?.(id),

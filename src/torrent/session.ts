@@ -2,13 +2,16 @@ import { EventEmitter } from "node:events";
 import { Downloader } from "./downloader.ts";
 import type { TorrentMetadata } from "./metadata.ts";
 import type { PeerManager } from "./peer/manager.ts";
-import { StorageManager } from "./storage.ts";
+import { loadTrustedResumeData } from "./resume.ts";
+import { StorageManager, VerificationCancelledError } from "./storage.ts";
 import type { TorrentStatus } from "./types.ts";
 
 export interface SessionStartOptions {
 	skipVerify?: boolean;
 	verifyYieldEveryPieces?: number;
 	verifyYieldEveryMs?: number;
+	verifyChunkSizeBytes?: number;
+	signal?: AbortSignal;
 }
 
 export class TorrentSession extends EventEmitter {
@@ -37,14 +40,34 @@ export class TorrentSession extends EventEmitter {
 	async startWithOptions(options: SessionStartOptions = {}): Promise<void> {
 		this.transition("checking");
 		const setup = await this.storage.setup();
-		if (!options.skipVerify && !setup.allFilesCreated) {
-			await this.storage.verifyAll({
-				yieldEveryPieces: options.verifyYieldEveryPieces,
-				yieldEveryMs: options.verifyYieldEveryMs,
-				onProgress: (checked: number, valid: number) => {
-					this.emit("checking", checked, this.metadata.pieceCount, valid);
-				},
-			});
+		try {
+			if (options.signal?.aborted) throw new VerificationCancelledError();
+			if (!options.skipVerify && !setup.allFilesCreated) {
+				const trustedResume = loadTrustedResumeData(
+					this.metadata,
+					this.downloadPath,
+				);
+				if (trustedResume) {
+					for (const piece of trustedResume.verifiedPieces) {
+						this.storage.markPiece(piece);
+					}
+				} else {
+					await this.storage.verifyAll({
+						yieldEveryPieces: options.verifyYieldEveryPieces,
+						yieldEveryMs: options.verifyYieldEveryMs,
+						chunkSizeBytes: options.verifyChunkSizeBytes,
+						signal: options.signal,
+						onProgress: (checked: number, valid: number) => {
+							this.emit("checking", checked, this.metadata.pieceCount, valid);
+						},
+					});
+				}
+			}
+		} catch (err) {
+			if (err instanceof VerificationCancelledError) {
+				this.transition("stopped");
+			}
+			throw err;
 		}
 		this.transition("ready");
 	}

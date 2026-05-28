@@ -1,22 +1,23 @@
-import { readdirSync, existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
 import { resolvePath } from "../utils/paths";
 
-const DIALOG_WIDTH  = 60;
+const DIALOG_WIDTH = 60;
 const DIALOG_HEIGHT = 16;
-const INNER_W       = DIALOG_WIDTH - 2;
-const MARGIN        = 2;
+const INNER_W = DIALOG_WIDTH - 2;
+const MARGIN = 2;
 
 function truncateName(name: string): string {
 	const max = INNER_W - MARGIN * 2;
-	return name.length > max ? name.slice(0, max - 1) + "…" : name;
+	return name.length > max ? `${name.slice(0, max - 1)}…` : name;
 }
 
 function setBg(node: BoxRenderable, bg: string | undefined): void {
-	(node as unknown as { backgroundColor: string | undefined }).backgroundColor = bg;
+	(node as unknown as { backgroundColor: string | undefined }).backgroundColor =
+		bg;
 }
 
 export class AddTorrentDialog {
@@ -31,7 +32,11 @@ export class AddTorrentDialog {
 
 	onSelect?: (filePath: string) => void;
 
-	constructor(renderer: CliRenderer, layout: LayoutDimensions, torrentFolder: string) {
+	constructor(
+		renderer: CliRenderer,
+		layout: LayoutDimensions,
+		torrentFolder: string,
+	) {
 		this.renderer = renderer;
 		this.layout = layout;
 		this.torrentFolder = resolvePath(torrentFolder);
@@ -93,14 +98,23 @@ export class AddTorrentDialog {
 	private updateHighlight(): void {
 		const theme = getTheme();
 		for (let i = 0; i < this.itemRows.length; i++) {
-			setBg(this.itemRows[i]!, i === this.selectedIndex ? theme.bgTertiary : undefined);
+			setBg(
+				this.itemRows[i]!,
+				i === this.selectedIndex ? theme.bgTertiary : undefined,
+			);
 		}
 	}
 
 	private build(): void {
 		const theme = getTheme();
-		const left = Math.max(0, Math.floor((this.layout.terminal.width  - DIALOG_WIDTH)  / 2));
-		const top  = Math.max(0, Math.floor((this.layout.terminal.height - DIALOG_HEIGHT) / 2));
+		const left = Math.max(
+			0,
+			Math.floor((this.layout.terminal.width - DIALOG_WIDTH) / 2),
+		);
+		const top = Math.max(
+			0,
+			Math.floor((this.layout.terminal.height - DIALOG_HEIGHT) / 2),
+		);
 
 		const container = new BoxRenderable(this.renderer, {
 			position: "absolute",
@@ -122,8 +136,18 @@ export class AddTorrentDialog {
 			paddingLeft: MARGIN,
 			paddingRight: MARGIN,
 		});
-		titleRow.add(new TextRenderable(this.renderer, { content: "Add Torrent", fg: theme.accent }));
-		titleRow.add(new TextRenderable(this.renderer, { content: "Esc to close", fg: theme.fgMuted }));
+		titleRow.add(
+			new TextRenderable(this.renderer, {
+				content: "Add Torrent",
+				fg: theme.accent,
+			}),
+		);
+		titleRow.add(
+			new TextRenderable(this.renderer, {
+				content: "Esc to close",
+				fg: theme.fgMuted,
+			}),
+		);
 		container.add(titleRow);
 
 		// Spacer
@@ -132,22 +156,27 @@ export class AddTorrentDialog {
 		this.itemRows = [];
 
 		if (this.files.length === 0) {
-			container.add(new TextRenderable(this.renderer, {
-				content: " ".repeat(MARGIN) + `No .torrent files in ${this.torrentFolder}`,
-				fg: theme.fgMuted,
-			}));
+			container.add(
+				new TextRenderable(this.renderer, {
+					content: `${" ".repeat(MARGIN)}No .torrent files in ${this.torrentFolder}`,
+					fg: theme.fgMuted,
+				}),
+			);
 		} else {
 			for (let i = 0; i < this.files.length; i++) {
 				const file = this.files[i]!;
 				const row = new BoxRenderable(this.renderer, {
 					width: INNER_W,
 					height: 1,
-					backgroundColor: i === this.selectedIndex ? theme.bgTertiary : undefined,
+					backgroundColor:
+						i === this.selectedIndex ? theme.bgTertiary : undefined,
 				});
-				row.add(new TextRenderable(this.renderer, {
-					content: " ".repeat(MARGIN) + truncateName(file.name),
-					fg: i === this.selectedIndex ? theme.fgPrimary : theme.fgSecondary,
-				}));
+				row.add(
+					new TextRenderable(this.renderer, {
+						content: " ".repeat(MARGIN) + truncateName(file.name),
+						fg: i === this.selectedIndex ? theme.fgPrimary : theme.fgSecondary,
+					}),
+				);
 				container.add(row);
 				this.itemRows.push(row);
 			}

@@ -7,6 +7,8 @@ import {
 	readSync,
 	writeSync,
 } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import { open as openAsync } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SHA1 } from "bun";
 import type { TorrentMetadata } from "./metadata.ts";
@@ -18,10 +20,12 @@ interface StorageSetupSummary {
 	allFilesCreated: boolean;
 }
 
-interface VerifyAllOptions {
+export interface VerifyAllOptions {
 	tolerateMissing?: boolean;
 	yieldEveryPieces?: number;
 	yieldEveryMs?: number;
+	chunkSizeBytes?: number;
+	signal?: AbortSignal;
 	onProgress?: (
 		checked: number,
 		valid: number,
@@ -30,13 +34,23 @@ interface VerifyAllOptions {
 	) => void;
 }
 
-interface VerifyAllSummary {
+export interface VerifyAllSummary {
 	valid: number;
 	missing: number;
 	corrupt: number;
 }
 
 type ReadHandleMap = Map<string, number>;
+type AsyncReadHandleMap = Map<string, FileHandle>;
+
+const DEFAULT_VERIFY_CHUNK_SIZE = 1024 * 1024;
+
+export class VerificationCancelledError extends Error {
+	constructor() {
+		super("Verification cancelled");
+		this.name = "VerificationCancelledError";
+	}
+}
 
 function formatSize(bytes: number): string {
 	const gb = bytes / (1024 * 1024 * 1024);
@@ -174,74 +188,67 @@ export class StorageManager {
 		return bufEqual(actual, expected);
 	}
 
-	// Opens each file once and reads through it sequentially — no per-piece open/close.
+	// Opens each file once and reads through it sequentially, yielding between
+	// chunks so large pieces do not monopolize the TUI event loop.
 	async verifyAll(options: VerifyAllOptions = {}): Promise<VerifyAllSummary> {
 		const tolerateMissing = options.tolerateMissing ?? false;
 		const yieldEveryPieces = options.yieldEveryPieces ?? 8;
 		const yieldEveryMs = options.yieldEveryMs ?? 16;
+		const chunkSizeBytes =
+			options.chunkSizeBytes && options.chunkSizeBytes > 0
+				? options.chunkSizeBytes
+				: DEFAULT_VERIFY_CHUNK_SIZE;
 		let valid = 0;
 		let missing = 0;
 		let corrupt = 0;
 		let lastYield = Date.now();
-		const readHandles: ReadHandleMap = new Map();
+		const syncReadHandles: ReadHandleMap = new Map();
+		const asyncReadHandles: AsyncReadHandleMap = new Map();
 		this.downloadedPieces.clear();
+
+		const maybeYield = async (force = false): Promise<void> => {
+			if (!force && Date.now() - lastYield < yieldEveryMs) return;
+			await yieldToEventLoop();
+			lastYield = Date.now();
+			throwIfAborted(options.signal);
+		};
 
 		try {
 			for (let i = 0; i < this.metadata.pieceCount; i++) {
-				const data = this.readPieceMaybeSync(i, tolerateMissing, readHandles);
-				if (!data) {
+				throwIfAborted(options.signal);
+
+				const pieceState =
+					this.pieceLengthForIndex(i) <= chunkSizeBytes
+						? this.verifyPieceByBuffer(i, tolerateMissing, syncReadHandles)
+						: await this.verifyPieceByChunks(
+								i,
+								tolerateMissing,
+								chunkSizeBytes,
+								asyncReadHandles,
+								options.signal,
+								maybeYield,
+							);
+
+				if (pieceState === "missing") {
 					missing++;
 					options.onProgress?.(i + 1, valid, missing, corrupt);
-					if (
-						(i + 1) % yieldEveryPieces === 0 ||
-						Date.now() - lastYield >= yieldEveryMs
-					) {
-						await yieldToEventLoop();
-						lastYield = Date.now();
-					}
+					await maybeYield((i + 1) % yieldEveryPieces === 0);
 					continue;
 				}
 
-				if (isAllZero(data)) {
-					missing++;
-					options.onProgress?.(i + 1, valid, missing, corrupt);
-					if (
-						(i + 1) % yieldEveryPieces === 0 ||
-						Date.now() - lastYield >= yieldEveryMs
-					) {
-						await yieldToEventLoop();
-						lastYield = Date.now();
-					}
-					continue;
-				}
-
-				const expected = this.metadata.pieceHashes[i];
-				if (!expected) {
+				if (pieceState === "corrupt") {
 					corrupt++;
-					continue;
-				}
-
-				const actual = new SHA1()
-					.update(data)
-					.digest() as unknown as Uint8Array;
-				if (bufEqual(actual, expected)) {
+				} else {
 					valid++;
 					this.downloadedPieces.add(i);
-				} else {
-					corrupt++;
 				}
 
 				options.onProgress?.(i + 1, valid, missing, corrupt);
-				if (
-					(i + 1) % yieldEveryPieces === 0 ||
-					Date.now() - lastYield >= yieldEveryMs
-				) {
-					await yieldToEventLoop();
-					lastYield = Date.now();
-				}
+				await maybeYield((i + 1) % yieldEveryPieces === 0);
 			}
 		} finally {
-			this.closeReadHandles(readHandles);
+			this.closeReadHandles(syncReadHandles);
+			await this.closeAsyncReadHandles(asyncReadHandles);
 		}
 
 		log(
@@ -304,6 +311,117 @@ export class StorageManager {
 		}
 		readHandles.clear();
 	}
+
+	private verifyPieceByBuffer(
+		pieceIndex: number,
+		tolerateMissing: boolean,
+		readHandles: ReadHandleMap,
+	): "valid" | "missing" | "corrupt" {
+		const expected = this.metadata.pieceHashes[pieceIndex];
+		if (!expected) return "corrupt";
+
+		const data = this.readPieceMaybeSync(
+			pieceIndex,
+			tolerateMissing,
+			readHandles,
+		);
+		if (!data || isAllZero(data)) return "missing";
+
+		const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
+		return bufEqual(actual, expected) ? "valid" : "corrupt";
+	}
+
+	private async verifyPieceByChunks(
+		pieceIndex: number,
+		tolerateMissing: boolean,
+		chunkSizeBytes: number,
+		readHandles: AsyncReadHandleMap,
+		signal: AbortSignal | undefined,
+		maybeYield: () => Promise<void>,
+	): Promise<"valid" | "missing" | "corrupt"> {
+		const expected = this.metadata.pieceHashes[pieceIndex];
+		if (!expected) return "corrupt";
+
+		const hash = new SHA1();
+		let sawNonZero = false;
+
+		for (const { file, fileOffset, length } of this.metadata.pieceToFileRanges(
+			pieceIndex,
+		)) {
+			const fullPath = join(this.downloadPath, file.path);
+			const handle = await this.getAsyncReadHandle(
+				fullPath,
+				tolerateMissing,
+				readHandles,
+			);
+			if (!handle) return "missing";
+
+			let remaining = length;
+			let offset = fileOffset;
+			while (remaining > 0) {
+				throwIfAborted(signal);
+
+				const chunkLength = Math.min(remaining, chunkSizeBytes);
+				const chunk = Buffer.allocUnsafe(chunkLength);
+				const { bytesRead } = await handle.read(chunk, 0, chunkLength, offset);
+				if (bytesRead !== chunkLength) {
+					if (tolerateMissing) return "missing";
+					throw new Error(`Short read: ${fullPath}`);
+				}
+
+				if (!sawNonZero && !isAllZero(chunk)) sawNonZero = true;
+				hash.update(chunk);
+				remaining -= bytesRead;
+				offset += bytesRead;
+				await maybeYield();
+			}
+		}
+
+		if (!sawNonZero) return "missing";
+
+		const actual = hash.digest() as unknown as Uint8Array;
+		return bufEqual(actual, expected) ? "valid" : "corrupt";
+	}
+
+	private async getAsyncReadHandle(
+		fullPath: string,
+		tolerateMissing: boolean,
+		readHandles: AsyncReadHandleMap,
+	): Promise<FileHandle | null> {
+		const cached = readHandles.get(fullPath);
+		if (cached) return cached;
+
+		try {
+			const handle = await openAsync(fullPath, "r");
+			readHandles.set(fullPath, handle);
+			return handle;
+		} catch (err) {
+			if (
+				tolerateMissing &&
+				err instanceof Error &&
+				"code" in err &&
+				err.code === "ENOENT"
+			) {
+				return null;
+			}
+			throw err;
+		}
+	}
+
+	private async closeAsyncReadHandles(
+		readHandles: AsyncReadHandleMap,
+	): Promise<void> {
+		const handles = [...readHandles.values()];
+		readHandles.clear();
+		await Promise.all(handles.map((handle) => handle.close().catch(() => {})));
+	}
+
+	private pieceLengthForIndex(pieceIndex: number): number {
+		const isLastPiece = pieceIndex === this.metadata.pieceCount - 1;
+		return isLastPiece
+			? this.metadata.totalSize - pieceIndex * this.metadata.pieceLength
+			: this.metadata.pieceLength;
+	}
 }
 
 function isAllZero(buf: Uint8Array): boolean {
@@ -323,4 +441,10 @@ function bufEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 function yieldToEventLoop(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+	if (signal?.aborted) {
+		throw new VerificationCancelledError();
+	}
 }

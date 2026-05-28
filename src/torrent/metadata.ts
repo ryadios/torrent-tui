@@ -1,6 +1,6 @@
 import { SHA1 } from "bun";
-import { extractInfoBytes } from "./parser.ts";
 import type { BencodeValue } from "./parser.ts";
+import { extractInfoBytes } from "./parser.ts";
 import type { FileInfo } from "./types.ts";
 
 const TEXT_DECODER = new TextDecoder();
@@ -20,8 +20,11 @@ export class TorrentMetadata {
 	readonly infoHash: Uint8Array;
 	readonly announceList: string[][];
 
-	constructor(decoded: { [key: string]: BencodeValue }, rawTorrentBytes: Uint8Array) {
-		const info = decoded["info"];
+	constructor(
+		decoded: { [key: string]: BencodeValue },
+		rawTorrentBytes: Uint8Array,
+	) {
+		const info = decoded.info;
 		if (
 			typeof info !== "object" ||
 			info === null ||
@@ -33,14 +36,12 @@ export class TorrentMetadata {
 		const infoDict = info as { [key: string]: BencodeValue };
 
 		// name
-		const nameRaw = infoDict["name"];
+		const nameRaw = infoDict.name;
 		if (!(nameRaw instanceof Uint8Array) && typeof nameRaw !== "string") {
 			throw new Error("Missing name in info dict");
 		}
 		this.name =
-			nameRaw instanceof Uint8Array
-				? TEXT_DECODER.decode(nameRaw)
-				: nameRaw;
+			nameRaw instanceof Uint8Array ? TEXT_DECODER.decode(nameRaw) : nameRaw;
 
 		// piece length
 		const pl = infoDict["piece length"];
@@ -48,7 +49,7 @@ export class TorrentMetadata {
 		this.pieceLength = pl;
 
 		// piece hashes
-		const piecesRaw = infoDict["pieces"];
+		const piecesRaw = infoDict.pieces;
 		if (!(piecesRaw instanceof Uint8Array)) {
 			throw new Error("Missing or invalid pieces");
 		}
@@ -64,8 +65,8 @@ export class TorrentMetadata {
 		// file list
 		this.files = [];
 		let offset = 0;
-		const lengthField = infoDict["length"];
-		const filesField = infoDict["files"];
+		const lengthField = infoDict.length;
+		const filesField = infoDict.files;
 
 		if (typeof lengthField === "number") {
 			// single-file torrent
@@ -83,8 +84,8 @@ export class TorrentMetadata {
 					throw new Error("Invalid file entry");
 				}
 				const fileDict = entry as { [key: string]: BencodeValue };
-				const fileLen = fileDict["length"];
-				const filePath = fileDict["path"];
+				const fileLen = fileDict.length;
+				const filePath = fileDict.path;
 				if (typeof fileLen !== "number") throw new Error("Invalid file length");
 				if (!Array.isArray(filePath)) throw new Error("Invalid file path");
 
@@ -105,7 +106,9 @@ export class TorrentMetadata {
 
 		// Hash the raw bytes from the original file — not a re-encoded version.
 		// BEP 3: must extract the substring directly, not decode-encode roundtrip.
-		this.infoHash = SHA1.hash(extractInfoBytes(rawTorrentBytes)) as unknown as Uint8Array;
+		this.infoHash = SHA1.hash(
+			extractInfoBytes(rawTorrentBytes),
+		) as unknown as Uint8Array;
 
 		// announce list (BEP 12)
 		const announceListRaw = decoded["announce-list"];
@@ -123,7 +126,7 @@ export class TorrentMetadata {
 				)
 				.filter((tier) => tier.length > 0);
 		} else {
-			const announce = decoded["announce"];
+			const announce = decoded.announce;
 			const announceStr =
 				announce instanceof Uint8Array
 					? TEXT_DECODER.decode(announce)
@@ -159,8 +162,11 @@ export class TorrentMetadata {
 			: this.pieceLength;
 		const pieceEnd = pieceStart + pieceLen;
 
-		const ranges: Array<{ file: FileInfo; fileOffset: number; length: number }> =
-			[];
+		const ranges: Array<{
+			file: FileInfo;
+			fileOffset: number;
+			length: number;
+		}> = [];
 
 		for (const file of this.files) {
 			const fileEnd = file.offset + file.length;
@@ -178,13 +184,22 @@ export class TorrentMetadata {
 	}
 
 	logSummary(): void {
-		const httpTrackers = this.announceList.flat().filter((u) => u.startsWith("http")).length;
-		const udpTrackers = this.announceList.flat().filter((u) => u.startsWith("udp")).length;
+		const httpTrackers = this.announceList
+			.flat()
+			.filter((u) => u.startsWith("http")).length;
+		const udpTrackers = this.announceList
+			.flat()
+			.filter((u) => u.startsWith("udp")).length;
 		const trackerParts = [
 			httpTrackers > 0 ? `${httpTrackers} HTTP` : "",
 			udpTrackers > 0 ? `${udpTrackers} UDP` : "",
-		].filter(Boolean).join("  ");
+		]
+			.filter(Boolean)
+			.join("  ");
 
-		log("torrent", `${this.name}   ${this.formatSize()}   ${this.pieceCount} × ${this.formatPieceLength()}   ${trackerParts || "no trackers"}`);
+		log(
+			"torrent",
+			`${this.name}   ${this.formatSize()}   ${this.pieceCount} × ${this.formatPieceLength()}   ${trackerParts || "no trackers"}`,
+		);
 	}
 }
