@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 export function writeJsonAtomic(path: string, value: unknown): void {

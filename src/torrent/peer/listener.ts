@@ -1,5 +1,5 @@
-import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
+import { createServer } from "node:net";
 import { log } from "../metadata.ts";
 
 const PORT_RANGE = [6881, 6882, 6883, 6884, 6885, 6886, 6887, 6888, 6889];

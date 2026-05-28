@@ -1,21 +1,21 @@
 import { EventEmitter } from "node:events";
-import { createConnection } from "node:net";
 import type { Socket } from "node:net";
+import { createConnection } from "node:net";
 import { log } from "../metadata.ts";
+import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { MessageBuffer } from "./message-buffer.ts";
+import { getPeerId } from "./peer-id.ts";
 import {
-	MSG,
-	decode as decodeMsg,
-	encode as encodeMsg,
-	encodeHave,
-	encodeRequest,
-	encodeCancel,
 	decodeHave,
+	decode as decodeMsg,
 	decodePiece,
 	decodeRequest,
+	encodeCancel,
+	encodeHave,
+	encode as encodeMsg,
+	encodeRequest,
+	MSG,
 } from "./protocol.ts";
-import { buildHandshake, parseHandshake, HANDSHAKE_LEN } from "./handshake.ts";
-import { getPeerId } from "./peer-id.ts";
 
 const KEEPALIVE_INTERVAL_MS = 120_000;
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -48,11 +48,7 @@ export class PeerConnection extends EventEmitter {
 	private infoHash: Uint8Array;
 	private settle?: (err?: Error) => void;
 
-	constructor(
-		address: string,
-		port: number,
-		infoHash: Uint8Array,
-	) {
+	constructor(address: string, port: number, infoHash: Uint8Array) {
 		super();
 		this.address = address;
 		this.port = port;
@@ -77,7 +73,10 @@ export class PeerConnection extends EventEmitter {
 			// 10s covers both TCP connect AND handshake completion.
 			// Do NOT clear on TCP connect — only clear when promise settles.
 			const timeout = setTimeout(() => {
-				log("timeout", `${this.address}:${this.port}  after ${CONNECT_TIMEOUT_MS / 1000}s`);
+				log(
+					"timeout",
+					`${this.address}:${this.port}  after ${CONNECT_TIMEOUT_MS / 1000}s`,
+				);
 				sock.destroy();
 				this.settle?.(new Error("connect timeout"));
 			}, CONNECT_TIMEOUT_MS);
@@ -121,7 +120,10 @@ export class PeerConnection extends EventEmitter {
 				this.peerId = result.peerId;
 				this.handshakeDone = true;
 				this.startKeepalive();
-				log("handshake", `${this.address}:${this.port}   ${this.peerId.slice(0, 8)}`);
+				log(
+					"handshake",
+					`${this.address}:${this.port}   ${this.peerId.slice(0, 8)}`,
+				);
 				this.settle?.(); // resolve the connect() promise
 				const remainder = this.handshakeBuffer.slice(HANDSHAKE_LEN);
 				this.handshakeBuffer = new Uint8Array(0);
@@ -191,7 +193,10 @@ export class PeerConnection extends EventEmitter {
 		let n = 0;
 		for (const byte of this.piecesBitfield) {
 			let b = byte;
-			while (b) { n += b & 1; b >>>= 1; }
+			while (b) {
+				n += b & 1;
+				b >>>= 1;
+			}
 		}
 		return n;
 	}

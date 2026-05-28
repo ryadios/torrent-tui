@@ -1,9 +1,9 @@
 // Config loader - reads from ~/.config/torrent-tui/settings.json
 
 import { existsSync, readFileSync } from "node:fs";
-import { getConfigPath } from "../utils/paths";
-import { writeJsonAtomic } from "../utils/json";
 import { log } from "../torrent/metadata";
+import { writeJsonAtomic } from "../utils/json";
+import { getConfigPath } from "../utils/paths";
 import { type AppSettings, DEFAULT_SETTINGS, settingsSchema } from "./settings";
 
 const SETTINGS_FILE = "settings.json";

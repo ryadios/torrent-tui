@@ -22,7 +22,10 @@ export function filterTorrents(
 			return torrents.filter((t) => t.status === "paused");
 		case "Stopped":
 			return torrents.filter(
-				(t) => t.status === "stopped" || t.status === "error",
+				(t) =>
+					t.status === "stopped" ||
+					t.status === "error" ||
+					t.status === "missing",
 			);
 		default:
 			return torrents;

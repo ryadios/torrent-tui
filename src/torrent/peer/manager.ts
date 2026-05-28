@@ -1,11 +1,11 @@
 import { EventEmitter } from "node:events";
-import { log } from "../metadata.ts";
-import { PeerConnection } from "./connection.ts";
-import { PeerListener } from "./listener.ts";
-import { buildHandshake, parseHandshake, HANDSHAKE_LEN } from "./handshake.ts";
-import { getPeerId } from "./peer-id.ts";
 import type { TorrentMetadata } from "../metadata.ts";
+import { log } from "../metadata.ts";
 import type { PeerInfo } from "../types.ts";
+import { PeerConnection } from "./connection.ts";
+import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
+import { PeerListener } from "./listener.ts";
+import { getPeerId } from "./peer-id.ts";
 
 export class PeerManager extends EventEmitter {
 	readonly connections: Map<string, PeerConnection> = new Map();
@@ -50,7 +50,8 @@ export class PeerManager extends EventEmitter {
 		const conn = new PeerConnection(ip, port, this.infoHash);
 
 		conn.on("bitfield", () => {
-			if (conn.countPiecesPublic() > 0 && !conn.amInterested) conn.sendInterested();
+			if (conn.countPiecesPublic() > 0 && !conn.amInterested)
+				conn.sendInterested();
 		});
 
 		conn.on("disconnect", () => {
@@ -86,7 +87,10 @@ export class PeerManager extends EventEmitter {
 				const ip = socket.remoteAddress ?? "unknown";
 				const port = socket.remotePort ?? 0;
 				const key = `${ip}:${port}`;
-				log("peer", `${key.padEnd(50)}  ok   ${result.peerId.slice(0, 8)}  (inbound)`);
+				log(
+					"peer",
+					`${key.padEnd(50)}  ok   ${result.peerId.slice(0, 8)}  (inbound)`,
+				);
 
 				// Wrap the existing socket in a PeerConnection
 				const conn = new PeerConnection(ip, port, this.infoHash);
@@ -119,7 +123,10 @@ export class PeerManager extends EventEmitter {
 	startChoking(): void {
 		// BEP 3: recalculate every 10s, optimistic rotates every 30s
 		this.chokeTimer = setInterval(() => this.recalculateChokes(), 10_000);
-		this.optimisticTimer = setInterval(() => this.rotateOptimisticUnchoke(), 30_000);
+		this.optimisticTimer = setInterval(
+			() => this.rotateOptimisticUnchoke(),
+			30_000,
+		);
 		// Run immediately so peers are unchoked on download start
 		this.recalculateChokes();
 	}
@@ -144,7 +151,9 @@ export class PeerManager extends EventEmitter {
 
 		// BEP 3: unchoke top 4 by download rate from them (reciprocation)
 		const interested = peers.filter((p) => p.peerInterested);
-		const sorted = [...interested].sort((a, b) => b.downloadBytesPerSec - a.downloadBytesPerSec);
+		const sorted = [...interested].sort(
+			(a, b) => b.downloadBytesPerSec - a.downloadBytesPerSec,
+		);
 		const toUnchoke = new Set<string>();
 
 		for (let i = 0; i < Math.min(4, sorted.length); i++) {
@@ -168,7 +177,9 @@ export class PeerManager extends EventEmitter {
 				.slice(0, 4)
 				.map((k) => {
 					const c = this.connections.get(k);
-					const mbps = ((c?.downloadBytesPerSec ?? 0) / (1024 * 1024)).toFixed(1);
+					const mbps = ((c?.downloadBytesPerSec ?? 0) / (1024 * 1024)).toFixed(
+						1,
+					);
 					return `${c?.peerId.slice(0, 8) ?? k}(${mbps})`;
 				})
 				.join("  ");
@@ -181,7 +192,8 @@ export class PeerManager extends EventEmitter {
 
 	private rotateOptimisticUnchoke(): void {
 		const choked = [...this.connections.values()].filter(
-			(p) => !this.unchokedKeys.has(`${p.address}:${p.port}`) && p.peerInterested,
+			(p) =>
+				!this.unchokedKeys.has(`${p.address}:${p.port}`) && p.peerInterested,
 		);
 		if (choked.length === 0) return;
 
@@ -210,15 +222,6 @@ export class PeerManager extends EventEmitter {
 			seen.add(k);
 			return true;
 		});
-	}
-
-	private countBits(buf: Uint8Array): number {
-		let n = 0;
-		for (const byte of buf) {
-			let b = byte;
-			while (b) { n += b & 1; b >>>= 1; }
-		}
-		return n;
 	}
 
 	close(): void {

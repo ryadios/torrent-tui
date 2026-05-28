@@ -2,7 +2,7 @@ import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
 
-const DIALOG_WIDTH  = 38;
+const DIALOG_WIDTH = 38;
 const DIALOG_HEIGHT = 7;
 
 export class ConfirmDialog {
@@ -44,7 +44,13 @@ export class ConfirmDialog {
 
 	handleInput(key: string): boolean {
 		if (!this.isOpen) return false;
-		if (key === "tab" || key === "h" || key === "l" || key === "left" || key === "right") {
+		if (
+			key === "tab" ||
+			key === "h" ||
+			key === "l" ||
+			key === "left" ||
+			key === "right"
+		) {
 			this.focusedBtn = this.focusedBtn === "confirm" ? "cancel" : "confirm";
 			this.updateButtons();
 			return true;
@@ -85,8 +91,14 @@ export class ConfirmDialog {
 
 	private build(message: string): void {
 		const theme = getTheme();
-		const left = Math.max(0, Math.floor((this.layout.terminal.width  - DIALOG_WIDTH)  / 2));
-		const top  = Math.max(0, Math.floor((this.layout.terminal.height - DIALOG_HEIGHT) / 2));
+		const left = Math.max(
+			0,
+			Math.floor((this.layout.terminal.width - DIALOG_WIDTH) / 2),
+		);
+		const top = Math.max(
+			0,
+			Math.floor((this.layout.terminal.height - DIALOG_HEIGHT) / 2),
+		);
 
 		const container = new BoxRenderable(this.renderer, {
 			position: "absolute",
@@ -101,17 +113,27 @@ export class ConfirmDialog {
 
 		const inner = DIALOG_WIDTH - 2;
 
-		container.add(new TextRenderable(this.renderer, { content: " ".repeat(inner) }));
-		container.add(new TextRenderable(this.renderer, {
-			content: ("  " + message).padEnd(inner),
-			fg: theme.fgPrimary,
-		}));
-		container.add(new TextRenderable(this.renderer, { content: " ".repeat(inner) }));
-		container.add(new TextRenderable(this.renderer, {
-			content: "  Files will be deleted from disk.".padEnd(inner),
-			fg: theme.fgSecondary,
-		}));
-		container.add(new TextRenderable(this.renderer, { content: " ".repeat(inner) }));
+		container.add(
+			new TextRenderable(this.renderer, { content: " ".repeat(inner) }),
+		);
+		container.add(
+			new TextRenderable(this.renderer, {
+				content: `  ${message}`.padEnd(inner),
+				fg: theme.fgPrimary,
+			}),
+		);
+		container.add(
+			new TextRenderable(this.renderer, { content: " ".repeat(inner) }),
+		);
+		container.add(
+			new TextRenderable(this.renderer, {
+				content: "  Files will be deleted from disk.".padEnd(inner),
+				fg: theme.fgSecondary,
+			}),
+		);
+		container.add(
+			new TextRenderable(this.renderer, { content: " ".repeat(inner) }),
+		);
 
 		const btnRow = new BoxRenderable(this.renderer, {
 			width: inner,

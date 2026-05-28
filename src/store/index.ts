@@ -7,7 +7,8 @@ export type TorrentUiStatus =
 	| "paused"
 	| "seeding"
 	| "stopped"
-	| "error";
+	| "error"
+	| "missing";
 
 export interface TorrentFileState {
 	path: string;

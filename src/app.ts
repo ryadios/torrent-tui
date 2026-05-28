@@ -114,7 +114,6 @@ export class App {
 
 		await this.bridge.restoreSession();
 		this.controller.start();
-		void this.bridge.verifyTrustedRestores();
 
 		if (initialTorrentPath) {
 			const filename =

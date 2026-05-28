@@ -1,15 +1,16 @@
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { SHA1 } from "bun";
-import { log } from "./metadata.ts";
-import { PiecePicker } from "./piece-picker.ts";
-import { getDataDir } from "../utils/paths.ts";
-import { writeJsonAtomic } from "../utils/json";
 import type { TorrentMetadata } from "./metadata.ts";
-import type { StorageManager } from "./storage.ts";
-import type { PeerManager } from "./peer/manager.ts";
+import { log } from "./metadata.ts";
 import type { PeerConnection } from "./peer/connection.ts";
+import type { PeerManager } from "./peer/manager.ts";
+import { PiecePicker } from "./piece-picker.ts";
+import {
+	infoHashHex,
+	loadTrustedResumeData,
+	writeResumeData,
+} from "./resume.ts";
+import type { StorageManager } from "./storage.ts";
 
 const BLOCK_SIZE = 16_384;
 const PIPELINE_DEPTH = 15;
@@ -93,7 +94,8 @@ export class Downloader extends EventEmitter {
 	private wirePeer(conn: PeerConnection): void {
 		const key = `${conn.address}:${conn.port}`;
 		if (this.bannedPeers.has(key)) return;
-		if (!this.pendingRequests.has(key)) this.pendingRequests.set(key, new Set());
+		if (!this.pendingRequests.has(key))
+			this.pendingRequests.set(key, new Set());
 
 		// Tell the peer what pieces we already have
 		if (this.storage.downloadedCount > 0) {
@@ -149,7 +151,9 @@ export class Downloader extends EventEmitter {
 		}
 	}
 
-	private nextBlock(conn: PeerConnection): { pieceIndex: number; begin: number; length: number } | null {
+	private nextBlock(
+		conn: PeerConnection,
+	): { pieceIndex: number; begin: number; length: number } | null {
 		// Tier 1: finish any in-progress piece this peer has (avoids partial waste)
 		for (const [pieceIndex, piece] of this.inProgress) {
 			if (!conn.hasPiece(pieceIndex)) continue;
@@ -167,7 +171,11 @@ export class Downloader extends EventEmitter {
 		if (pieceIndex === null) return null;
 
 		const total = this.pieceBlockCount(pieceIndex);
-		this.inProgress.set(pieceIndex, { blocks: new Array(total).fill(null), received: 0, total });
+		this.inProgress.set(pieceIndex, {
+			blocks: new Array(total).fill(null),
+			received: 0,
+			total,
+		});
 		return { pieceIndex, begin: 0, length: this.blockLength(pieceIndex, 0) };
 	}
 
@@ -178,7 +186,12 @@ export class Downloader extends EventEmitter {
 		return false;
 	}
 
-	private onBlock(conn: PeerConnection, index: number, begin: number, block: Uint8Array): void {
+	private onBlock(
+		conn: PeerConnection,
+		index: number,
+		begin: number,
+		block: Uint8Array,
+	): void {
 		const key = `${conn.address}:${conn.port}`;
 		const reqKey = `${index}:${begin}`;
 		this.pendingRequests.get(key)?.delete(reqKey);
@@ -206,15 +219,23 @@ export class Downloader extends EventEmitter {
 		if (!this.stopped) this.fillPipeline(conn);
 	}
 
-	private finishPiece(index: number, piece: InProgressPiece, conn: PeerConnection): void {
+	private finishPiece(
+		index: number,
+		piece: InProgressPiece,
+		conn: PeerConnection,
+	): void {
 		const key = `${conn.address}:${conn.port}`;
 		this.inProgress.delete(index);
 
 		// Assemble blocks
-		const assembled = Buffer.concat(piece.blocks.filter((b): b is Buffer => b !== null));
+		const assembled = Buffer.concat(
+			piece.blocks.filter((b): b is Buffer => b !== null),
+		);
 
 		// SHA-1 verify in memory
-		const actual = new SHA1().update(assembled).digest() as unknown as Uint8Array;
+		const actual = new SHA1()
+			.update(assembled)
+			.digest() as unknown as Uint8Array;
 		const expected = this.metadata.pieceHashes[index];
 
 		if (!expected || !bufEqual(actual, expected)) {
@@ -297,47 +318,28 @@ export class Downloader extends EventEmitter {
 
 	// Resume
 
-	private resumePath(): string {
-		const hex = Buffer.from(this.metadata.infoHash).toString("hex");
-		return join(getDataDir(), "resume", `${hex}.json`);
-	}
-
 	private loadResume(): void {
-		const path = this.resumePath();
-		if (!existsSync(path)) {
+		const resume = loadTrustedResumeData(this.metadata, this.downloadPath);
+		if (!resume) {
 			log("resume", "no saved state — starting fresh");
 			return;
 		}
-		try {
-			const data = JSON.parse(readFileSync(path, "utf-8")) as {
-				infoHash: string;
-				downloadPath: string;
-				downloadedPieces: number[];
-			};
-			if (data.downloadPath !== this.downloadPath) {
-				log("resume", "download path changed — starting fresh");
-				return;
-			}
-			// Only count pieces that verifyAll() already confirmed are on disk.
-			// Do not call markPiece() here — verifyAll() is the authoritative source.
-			// Marking stale resume entries would corrupt the download when files were deleted.
-			const confirmed = data.downloadedPieces.filter((i) => this.storage.hasPiece(i)).length;
-			log("resume", `${confirmed} / ${data.downloadedPieces.length} resume pieces confirmed on disk`);
-		} catch {
-			log("resume", "could not read save file — starting fresh");
+
+		for (const piece of resume.verifiedPieces) {
+			this.storage.markPiece(piece);
 		}
+		log(
+			"resume",
+			`${resume.verifiedPieces.length} / ${this.metadata.pieceCount} trusted resume pieces for ${infoHashHex(this.metadata).slice(0, 8)}`,
+		);
 	}
 
 	private saveResume(): void {
-		const path = this.resumePath();
-		const data = {
-			schemaVersion: 1,
-			infoHash: Buffer.from(this.metadata.infoHash).toString("hex"),
-			downloadPath: this.downloadPath,
-			downloadedPieces: [...this.storage.getDownloadedPieces()],
-			savedAt: Math.floor(Date.now() / 1000),
-		};
-		writeJsonAtomic(path, data);
+		writeResumeData(
+			this.metadata,
+			this.downloadPath,
+			this.storage.getDownloadedPieces(),
+		);
 	}
 }
 

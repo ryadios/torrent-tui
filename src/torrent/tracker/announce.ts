@@ -1,8 +1,8 @@
+import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
+import type { TrackerResponse } from "../types.ts";
 import { announceHTTP } from "./http-tracker.ts";
 import { announceUDP } from "./udp-tracker.ts";
-import type { TorrentMetadata } from "../metadata.ts";
-import type { TrackerResponse } from "../types.ts";
 
 export async function announce(
 	metadata: TorrentMetadata,
@@ -25,7 +25,10 @@ export async function announce(
 		if (r?.status === "fulfilled") {
 			for (const p of r.value) {
 				const k = `${p.ip}:${p.port}`;
-				if (!seen.has(k)) { seen.add(k); allPeers.push(p); }
+				if (!seen.has(k)) {
+					seen.add(k);
+					allPeers.push(p);
+				}
 			}
 		}
 	}

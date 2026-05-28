@@ -22,6 +22,7 @@ export interface ToastConfig {
 export class Toast {
 	private renderer: CliRenderer;
 	private config: ToastConfig;
+	private layout: LayoutDimensions;
 	private x: number;
 	private y: number;
 	private height: number;
@@ -29,8 +30,6 @@ export class Toast {
 	private createdAt: number;
 	private dismissed: boolean = false;
 	private addedToRenderer: boolean = false;
-
-	private layout: LayoutDimensions;
 	private container: BoxRenderable;
 	private titleLabel: TextRenderable;
 	private messageLabel: TextRenderable;

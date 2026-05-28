@@ -116,16 +116,19 @@ export function decode(data: Uint8Array): BencodeValue {
 function skipValue(data: Uint8Array, i: number): number {
 	const byte = data[i];
 	if (byte === undefined) throw new Error(`Unexpected end at ${i}`);
-	if (byte === 105) { // integer: i<digits>e
+	if (byte === 105) {
+		// integer: i<digits>e
 		while (i < data.length && data[i] !== 101) i++;
 		return i + 1;
 	}
-	if (byte === 108) { // list: l<items>e
+	if (byte === 108) {
+		// list: l<items>e
 		i++;
 		while (i < data.length && data[i] !== 101) i = skipValue(data, i);
 		return i + 1;
 	}
-	if (byte === 100) { // dict: d<key><value>...e
+	if (byte === 100) {
+		// dict: d<key><value>...e
 		i++;
 		while (i < data.length && data[i] !== 101) {
 			i = skipValue(data, i); // key
@@ -133,7 +136,8 @@ function skipValue(data: Uint8Array, i: number): number {
 		}
 		return i + 1;
 	}
-	if (byte >= 48 && byte <= 57) { // string: <len>:<bytes>
+	if (byte >= 48 && byte <= 57) {
+		// string: <len>:<bytes>
 		let j = i;
 		while (j < data.length && data[j] !== 58) j++;
 		const len = Number.parseInt(TEXT_DECODER.decode(data.slice(i, j)), 10);

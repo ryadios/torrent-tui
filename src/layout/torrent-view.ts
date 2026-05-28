@@ -101,6 +101,8 @@ function formatStatus(status: TorrentState["status"]): string {
 			return "Stopped";
 		case "error":
 			return "Error";
+		case "missing":
+			return "Missing";
 	}
 }
 
@@ -277,6 +279,8 @@ export class TorrentTable {
 					return theme.fgSecondary;
 				case "error":
 					return theme.error;
+				case "missing":
+					return theme.warning;
 				default:
 					return theme.accent;
 			}
