@@ -30,6 +30,10 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # IntelliJ based IDEs
 .idea
 
+# Agent-local files
+.agents
+.claude
+
 # Finder (MacOS) folder config
 .DS_Store
 
@@ -38,3 +42,6 @@ PLAN.md
 
 # Test torrent files
 *.torrent
+
+# Competitive analysis report
+REPORT.md

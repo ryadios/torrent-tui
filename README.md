@@ -3,6 +3,8 @@
 **A terminal BitTorrent client for focused download management.** Add `.torrent` files, track active transfers, and manage sessions from a clean keyboard-driven interface.
 
 [![npm version](https://img.shields.io/npm/v/torrent-tui?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/torrent-tui)
+[![gzipped](https://img.shields.io/badge/gzipped-39%20KB-2563eb?style=for-the-badge)](https://www.npmjs.com/package/torrent-tui)
+[![npm unpacked size](https://img.shields.io/npm/unpacked-size/torrent-tui?style=for-the-badge)](https://www.npmjs.com/package/torrent-tui)
 [![CI](https://img.shields.io/github/actions/workflow/status/ryadios/torrent-tui/release.yml?branch=main&style=for-the-badge&logo=github)](https://github.com/ryadios/torrent-tui/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/torrent-tui?style=for-the-badge)](./LICENSE)
 
