@@ -1,9 +1,9 @@
-import { createSocket } from "node:dgram";
 import { randomBytes } from "node:crypto";
+import { createSocket } from "node:dgram";
+import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import { getPeerId } from "../peer/peer-id.ts";
-import type { TorrentMetadata } from "../metadata.ts";
-import type { PeerInfo } from "../types.ts";
+import type { PeerInfo, TrackerResponse } from "../types.ts";
 
 const CONNECT_MAGIC = 0x41727101980n; // BEP 15 magic connection ID
 const CONNECT_ACTION = 0;
@@ -34,33 +34,70 @@ function buildAnnounceRequest(
 	const view = new DataView(buf.buffer);
 	let offset = 0;
 
-	view.setBigUint64(offset, connId); offset += 8;
-	view.setInt32(offset, ANNOUNCE_ACTION); offset += 4;
+	view.setBigUint64(offset, connId);
+	offset += 8;
+	view.setInt32(offset, ANNOUNCE_ACTION);
+	offset += 4;
 	const txId = randomTransactionId();
-	view.setUint32(offset, txId); offset += 4;
-	buf.set(metadata.infoHash, offset); offset += 20;
-	buf.set(getPeerId(), offset); offset += 20;
-	view.setBigInt64(offset, 0n); offset += 8;            // downloaded
-	view.setBigInt64(offset, BigInt(metadata.totalSize)); offset += 8; // left
-	view.setBigInt64(offset, 0n); offset += 8;            // uploaded
-	view.setInt32(offset, 2); offset += 4;                // event: started
-	view.setUint32(offset, 0); offset += 4;               // ip: default
-	view.setUint32(offset, 0); offset += 4;               // key
-	view.setInt32(offset, 50); offset += 4;               // num_want
-	view.setUint16(offset, listenPort);                    // port
+	view.setUint32(offset, txId);
+	offset += 4;
+	buf.set(metadata.infoHash, offset);
+	offset += 20;
+	buf.set(getPeerId(), offset);
+	offset += 20;
+	view.setBigInt64(offset, 0n);
+	offset += 8; // downloaded
+	view.setBigInt64(offset, BigInt(metadata.totalSize));
+	offset += 8; // left
+	view.setBigInt64(offset, 0n);
+	offset += 8; // uploaded
+	view.setInt32(offset, 2);
+	offset += 4; // event: started
+	view.setUint32(offset, 0);
+	offset += 4; // ip: default
+	view.setUint32(offset, 0);
+	offset += 4; // key
+	view.setInt32(offset, 50);
+	offset += 4; // num_want
+	view.setUint16(offset, listenPort); // port
 
 	return { buf, txId };
 }
 
-function parseCompactPeers(buf: Buffer, offset: number): PeerInfo[] {
+export function parseUDPCompactPeers(
+	buf: Uint8Array,
+	offset: number,
+): PeerInfo[] {
 	const peers: PeerInfo[] = [];
+	if ((buf.length - offset) % 6 !== 0) {
+		throw new Error("Invalid UDP compact peer data");
+	}
 	while (offset + 6 <= buf.length) {
 		const ip = `${buf[offset]}.${buf[offset + 1]}.${buf[offset + 2]}.${buf[offset + 3]}`;
-		const port = buf.readUInt16BE(offset + 4);
+		const port = ((buf[offset + 4] ?? 0) << 8) | (buf[offset + 5] ?? 0);
 		peers.push({ ip, port });
 		offset += 6;
 	}
 	return peers;
+}
+
+export function parseUDPAnnounceResponse(
+	buf: Uint8Array,
+	expectedTxId: number,
+): TrackerResponse {
+	if (buf.length < 20) throw new Error("UDP announce response too short");
+	const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+	if (view.getInt32(0) !== ANNOUNCE_ACTION)
+		throw new Error("bad announce action");
+	if (view.getUint32(4) !== expectedTxId)
+		throw new Error("announce txId mismatch");
+
+	return {
+		interval: view.getInt32(8),
+		incomplete: view.getInt32(12),
+		complete: view.getInt32(16),
+		peers: parseUDPCompactPeers(buf, 20),
+	};
 }
 
 function sendAndReceive(
@@ -80,7 +117,10 @@ function sendAndReceive(
 		});
 
 		socket.send(buf, port, host, (err) => {
-			if (err) { clearTimeout(timer); reject(err); }
+			if (err) {
+				clearTimeout(timer);
+				reject(err);
+			}
 		});
 	});
 }
@@ -104,19 +144,21 @@ export async function announceUDP(
 			const connectResp = await sendAndReceive(socket, connectBuf, host, port);
 
 			const view = new DataView(connectResp.buffer, connectResp.byteOffset);
-			if (view.getInt32(0) !== CONNECT_ACTION) throw new Error("bad connect action");
-			if (view.getUint32(4) !== connectTx) throw new Error("connect txId mismatch");
+			if (view.getInt32(0) !== CONNECT_ACTION)
+				throw new Error("bad connect action");
+			if (view.getUint32(4) !== connectTx)
+				throw new Error("connect txId mismatch");
 			const connId = view.getBigUint64(8);
 
 			// Step 2: announce
-			const { buf: annBuf, txId: annTx } = buildAnnounceRequest(connId, metadata, listenPort);
+			const { buf: annBuf, txId: annTx } = buildAnnounceRequest(
+				connId,
+				metadata,
+				listenPort,
+			);
 			const annResp = await sendAndReceive(socket, annBuf, host, port);
 
-			const annView = new DataView(annResp.buffer, annResp.byteOffset);
-			if (annView.getInt32(0) !== ANNOUNCE_ACTION) throw new Error("bad announce action");
-			if (annView.getUint32(4) !== annTx) throw new Error("announce txId mismatch");
-
-			const peers = parseCompactPeers(annResp, 20);
+			const { peers } = parseUDPAnnounceResponse(annResp, annTx);
 			log("tracker", `udp://${label}   ${peers.length} peers`);
 			return peers;
 		} catch (err) {
