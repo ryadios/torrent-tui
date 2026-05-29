@@ -43,11 +43,12 @@ function formatSpeed(bps: number): string {
 	return `${formatBytes(bps)}/s`;
 }
 
-function abbreviateHomePath(path: string): string {
-	const home = homedir();
-	if (path === home) return "~";
-	if (path.startsWith(`${home}/`)) {
-		return `~${path.slice(home.length)}`;
+export function abbreviateHomePath(path: string): string {
+	const normalizedPath = path.replace(/\\/g, "/");
+	const normalizedHome = homedir().replace(/\\/g, "/");
+	if (normalizedPath === normalizedHome) return "~";
+	if (normalizedPath.startsWith(`${normalizedHome}/`)) {
+		return `~${normalizedPath.slice(normalizedHome.length)}`;
 	}
 	return path;
 }
