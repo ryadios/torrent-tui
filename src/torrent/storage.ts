@@ -270,6 +270,14 @@ export class StorageManager {
 		return this.downloadedPieces.size;
 	}
 
+	get downloadedBytes(): number {
+		let total = 0;
+		for (const pieceIndex of this.downloadedPieces) {
+			total += this.pieceLengthForIndex(pieceIndex);
+		}
+		return total;
+	}
+
 	getDownloadedPieces(): ReadonlySet<number> {
 		return this.downloadedPieces;
 	}

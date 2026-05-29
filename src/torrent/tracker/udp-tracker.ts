@@ -3,7 +3,12 @@ import { createSocket } from "node:dgram";
 import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import { getPeerId } from "../peer/peer-id.ts";
-import type { PeerInfo, TrackerResponse } from "../types.ts";
+import type {
+	PeerInfo,
+	TrackerAnnounceRequest,
+	TrackerEvent,
+	TrackerResponse,
+} from "../types.ts";
 
 const CONNECT_MAGIC = 0x41727101980n; // BEP 15 magic connection ID
 const CONNECT_ACTION = 0;
@@ -28,11 +33,12 @@ function buildConnectRequest(): { buf: Buffer; txId: number } {
 function buildAnnounceRequest(
 	connId: bigint, // treated as unsigned
 	metadata: TorrentMetadata,
-	listenPort: number,
+	request: TrackerAnnounceRequest,
 ): { buf: Buffer; txId: number } {
 	const buf = Buffer.alloc(98);
 	const view = new DataView(buf.buffer);
 	let offset = 0;
+	const peerId = request.peerId ?? getPeerId();
 
 	view.setBigUint64(offset, connId);
 	offset += 8;
@@ -43,25 +49,38 @@ function buildAnnounceRequest(
 	offset += 4;
 	buf.set(metadata.infoHash, offset);
 	offset += 20;
-	buf.set(getPeerId(), offset);
+	buf.set(peerId, offset);
 	offset += 20;
-	view.setBigInt64(offset, 0n);
+	view.setBigInt64(offset, BigInt(request.downloaded));
 	offset += 8; // downloaded
-	view.setBigInt64(offset, BigInt(metadata.totalSize));
+	view.setBigInt64(offset, BigInt(request.left));
 	offset += 8; // left
-	view.setBigInt64(offset, 0n);
+	view.setBigInt64(offset, BigInt(request.uploaded));
 	offset += 8; // uploaded
-	view.setInt32(offset, 2);
-	offset += 4; // event: started
+	view.setInt32(offset, trackerEventCode(request.event));
+	offset += 4;
 	view.setUint32(offset, 0);
 	offset += 4; // ip: default
 	view.setUint32(offset, 0);
 	offset += 4; // key
-	view.setInt32(offset, 50);
+	view.setInt32(offset, request.numwant);
 	offset += 4; // num_want
-	view.setUint16(offset, listenPort); // port
+	view.setUint16(offset, request.port); // port
 
 	return { buf, txId };
+}
+
+export function trackerEventCode(event: TrackerEvent | undefined): number {
+	switch (event) {
+		case "completed":
+			return 1;
+		case "started":
+			return 2;
+		case "stopped":
+			return 3;
+		default:
+			return 0;
+	}
 }
 
 export function parseUDPCompactPeers(
@@ -128,8 +147,8 @@ function sendAndReceive(
 export async function announceUDP(
 	url: string,
 	metadata: TorrentMetadata,
-	listenPort = 6881,
-): Promise<PeerInfo[]> {
+	request: TrackerAnnounceRequest,
+): Promise<TrackerResponse> {
 	const parsed = new URL(url);
 	const host = parsed.hostname;
 	const port = Number(parsed.port) || 80;
@@ -151,16 +170,12 @@ export async function announceUDP(
 			const connId = view.getBigUint64(8);
 
 			// Step 2: announce
-			const { buf: annBuf, txId: annTx } = buildAnnounceRequest(
-				connId,
-				metadata,
-				listenPort,
-			);
+			const { buf: annBuf, txId: annTx } = buildAnnounceRequest(connId, metadata, request);
 			const annResp = await sendAndReceive(socket, annBuf, host, port);
 
-			const { peers } = parseUDPAnnounceResponse(annResp, annTx);
-			log("tracker", `udp://${label}   ${peers.length} peers`);
-			return peers;
+			const response = parseUDPAnnounceResponse(annResp, annTx);
+			log("tracker", `udp://${label}   ${response.peers.length} peers`);
+			return response;
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			if (attempt < MAX_RETRIES) {

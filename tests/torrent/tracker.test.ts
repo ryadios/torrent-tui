@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { encode } from "../../src/torrent/parser.ts";
 import {
+	buildHTTPTrackerUrl,
 	parseHTTPCompactPeers,
 	parseHTTPDictionaryPeers,
 	parseHTTPTrackerResponse,
@@ -8,7 +9,9 @@ import {
 import {
 	parseUDPAnnounceResponse,
 	parseUDPCompactPeers,
+	trackerEventCode,
 } from "../../src/torrent/tracker/udp-tracker.ts";
+import { singleFileTorrentFixture } from "../helpers/torrent-fixtures.ts";
 
 describe("HTTP tracker response parsing", () => {
 	test("parses compact IPv4 peers", () => {
@@ -38,12 +41,17 @@ describe("HTTP tracker response parsing", () => {
 	test("parses full tracker responses", () => {
 		const response = encode({
 			interval: 1800,
+			complete: 4,
+			incomplete: 9,
 			peers: new Uint8Array([1, 2, 3, 4, 0x1a, 0xe1]),
 		});
 
-		expect(parseHTTPTrackerResponse(response)).toEqual([
-			{ ip: "1.2.3.4", port: 6881 },
-		]);
+		expect(parseHTTPTrackerResponse(response)).toEqual({
+			complete: 4,
+			incomplete: 9,
+			interval: 1800,
+			peers: [{ ip: "1.2.3.4", port: 6881 }],
+		});
 	});
 
 	test("throws tracker failures and ignores malformed compact payloads", () => {
@@ -52,6 +60,29 @@ describe("HTTP tracker response parsing", () => {
 		).toThrow("Tracker failure: bad torrent");
 
 		expect(parseHTTPCompactPeers(new Uint8Array([1, 2, 3]))).toEqual([]);
+	});
+
+	test("builds announce urls with optional lifecycle events", () => {
+		const fixture = singleFileTorrentFixture();
+		const url = buildHTTPTrackerUrl(
+			"http://tracker.example/announce",
+			fixture.metadata,
+			{
+				port: 6881,
+				numwant: 25,
+				uploaded: 12,
+				downloaded: 34,
+				left: 56,
+				event: "completed",
+				peerId: new Uint8Array(20).fill(1),
+			},
+		);
+
+		expect(url).toContain("uploaded=12");
+		expect(url).toContain("downloaded=34");
+		expect(url).toContain("left=56");
+		expect(url).toContain("numwant=25");
+		expect(url).toContain("event=completed");
 	});
 });
 
@@ -102,6 +133,13 @@ describe("UDP tracker response parsing", () => {
 		expect(() => parseUDPCompactPeers(new Uint8Array([1, 2, 3]), 0)).toThrow(
 			"Invalid UDP compact peer data",
 		);
+	});
+
+	test("maps lifecycle events to UDP announce codes", () => {
+		expect(trackerEventCode(undefined)).toBe(0);
+		expect(trackerEventCode("completed")).toBe(1);
+		expect(trackerEventCode("started")).toBe(2);
+		expect(trackerEventCode("stopped")).toBe(3);
 	});
 });
 

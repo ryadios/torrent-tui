@@ -22,6 +22,7 @@ export class FakePeer extends EventEmitter {
 	uploadedThisInterval = 0;
 	downloadBytesPerSec = 0;
 	uploadBytesPerSec = 0;
+	uploadedTotal = 0;
 	readonly requests: RecordedRequest[] = [];
 	readonly cancels: RecordedRequest[] = [];
 	readonly haves: number[] = [];
@@ -80,6 +81,7 @@ export class FakePeer extends EventEmitter {
 
 	sendPiece(): void {
 		this.uploadedThisInterval += 1;
+		this.uploadedTotal += 1;
 	}
 
 	destroy(): void {

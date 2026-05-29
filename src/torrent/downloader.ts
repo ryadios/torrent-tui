@@ -22,17 +22,25 @@ interface InProgressPiece {
 	total: number;
 }
 
+interface RequestedBlock {
+	pieceIndex: number;
+	begin: number;
+	length: number;
+}
+
 export class Downloader extends EventEmitter {
 	private stopped = false;
 	private paused = false;
 	private inProgress = new Map<number, InProgressPiece>();
 	private pendingRequests = new Map<string, Set<string>>(); // peerKey → "idx:begin"
+	private blockAssignments = new Map<string, Set<string>>(); // "idx:begin" → peerKeys
 	private corruptStrikes = new Map<string, number>();
 	private bannedPeers = new Set<string>();
 	private nextPieceIndex = 0;
 	private bytesThisSecond = 0;
 	private lastSpeedReset = Date.now();
 	private speedBytesPerSec = 0;
+	private endgame = false;
 	private picker!: PiecePicker;
 
 	constructor(
@@ -147,6 +155,7 @@ export class Downloader extends EventEmitter {
 			const { pieceIndex, begin, length } = next;
 			const reqKey = `${pieceIndex}:${begin}`;
 			pending.add(reqKey);
+			this.assignRequest(key, reqKey);
 			conn.sendRequest(pieceIndex, begin, length);
 		}
 	}
@@ -154,6 +163,11 @@ export class Downloader extends EventEmitter {
 	private nextBlock(
 		conn: PeerConnection,
 	): { pieceIndex: number; begin: number; length: number } | null {
+		this.refreshEndgameMode();
+		if (this.endgame) {
+			return this.nextEndgameBlock(conn);
+		}
+
 		// Tier 1: finish any in-progress piece this peer has (avoids partial waste)
 		for (const [pieceIndex, piece] of this.inProgress) {
 			if (!conn.hasPiece(pieceIndex)) continue;
@@ -161,7 +175,7 @@ export class Downloader extends EventEmitter {
 				if (piece.blocks[b] !== null) continue;
 				const begin = b * BLOCK_SIZE;
 				const reqKey = `${pieceIndex}:${begin}`;
-				if (this.isRequested(reqKey)) continue;
+				if (this.isRequestedAnywhere(reqKey)) continue;
 				return { pieceIndex, begin, length: this.blockLength(pieceIndex, b) };
 			}
 		}
@@ -176,10 +190,41 @@ export class Downloader extends EventEmitter {
 			received: 0,
 			total,
 		});
+		this.refreshEndgameMode();
 		return { pieceIndex, begin: 0, length: this.blockLength(pieceIndex, 0) };
 	}
 
-	private isRequested(reqKey: string): boolean {
+	private nextEndgameBlock(
+		conn: PeerConnection,
+	): { pieceIndex: number; begin: number; length: number } | null {
+		const peerKey = `${conn.address}:${conn.port}`;
+		let best: RequestedBlock | null = null;
+		let lowestAssignments = Infinity;
+
+		for (const [pieceIndex, piece] of this.inProgress) {
+			if (!conn.hasPiece(pieceIndex)) continue;
+			for (let blockIdx = 0; blockIdx < piece.total; blockIdx++) {
+				if (piece.blocks[blockIdx] !== null) continue;
+				const begin = blockIdx * BLOCK_SIZE;
+				const reqKey = `${pieceIndex}:${begin}`;
+				const assignees = this.blockAssignments.get(reqKey);
+				if (assignees?.has(peerKey)) continue;
+				const assignmentCount = assignees?.size ?? 0;
+				if (assignmentCount < lowestAssignments) {
+					lowestAssignments = assignmentCount;
+					best = {
+						pieceIndex,
+						begin,
+						length: this.blockLength(pieceIndex, blockIdx),
+					};
+				}
+			}
+		}
+
+		return best;
+	}
+
+	private isRequestedAnywhere(reqKey: string): boolean {
 		for (const pending of this.pendingRequests.values()) {
 			if (pending.has(reqKey)) return true;
 		}
@@ -194,7 +239,7 @@ export class Downloader extends EventEmitter {
 	): void {
 		const key = `${conn.address}:${conn.port}`;
 		const reqKey = `${index}:${begin}`;
-		this.pendingRequests.get(key)?.delete(reqKey);
+		this.removeRequestForPeer(key, reqKey);
 
 		const piece = this.inProgress.get(index);
 		if (!piece) {
@@ -211,6 +256,7 @@ export class Downloader extends EventEmitter {
 		piece.blocks[blockIdx] = Buffer.from(block);
 		piece.received++;
 		this.bytesThisSecond += block.length;
+		this.emit("activity", index, begin, block.length);
 
 		if (piece.received === piece.total) {
 			this.finishPiece(index, piece, conn);
@@ -225,7 +271,9 @@ export class Downloader extends EventEmitter {
 		conn: PeerConnection,
 	): void {
 		const key = `${conn.address}:${conn.port}`;
+		const shouldCancelRedundant = this.endgame;
 		this.inProgress.delete(index);
+		this.refreshEndgameMode();
 
 		// Assemble blocks
 		const assembled = Buffer.concat(
@@ -248,10 +296,14 @@ export class Downloader extends EventEmitter {
 				conn.destroy();
 			}
 
+			this.cancelOutstandingRequestsForPiece(index, shouldCancelRedundant);
 			this.emit("piece:failed", index, key);
 			this.advanceNextPiece();
+			this.refreshEndgameMode();
 			return;
 		}
+
+		this.cancelOutstandingRequestsForPiece(index, shouldCancelRedundant);
 
 		// Write to disk
 		this.storage.writePieceSync(index, assembled);
@@ -287,7 +339,13 @@ export class Downloader extends EventEmitter {
 	}
 
 	private clearPending(key: string): void {
-		this.pendingRequests.get(key)?.clear();
+		const pending = this.pendingRequests.get(key);
+		if (!pending) return;
+		for (const reqKey of pending) {
+			this.unassignRequest(key, reqKey);
+		}
+		pending.clear();
+		this.refreshEndgameMode();
 	}
 
 	private advanceNextPiece(): void {
@@ -314,6 +372,66 @@ export class Downloader extends EventEmitter {
 			: this.metadata.pieceLength;
 		const isLastBlock = blockIdx === Math.ceil(pieceLen / BLOCK_SIZE) - 1;
 		return isLastBlock ? pieceLen - blockIdx * BLOCK_SIZE : BLOCK_SIZE;
+	}
+
+	private assignRequest(peerKey: string, reqKey: string): void {
+		const assignees = this.blockAssignments.get(reqKey) ?? new Set<string>();
+		assignees.add(peerKey);
+		this.blockAssignments.set(reqKey, assignees);
+	}
+
+	private unassignRequest(peerKey: string, reqKey: string): void {
+		const assignees = this.blockAssignments.get(reqKey);
+		if (!assignees) return;
+		assignees.delete(peerKey);
+		if (assignees.size === 0) this.blockAssignments.delete(reqKey);
+	}
+
+	private removeRequestForPeer(peerKey: string, reqKey: string): void {
+		this.pendingRequests.get(peerKey)?.delete(reqKey);
+		this.unassignRequest(peerKey, reqKey);
+		this.refreshEndgameMode();
+	}
+
+	private cancelOutstandingRequestsForPiece(
+		pieceIndex: number,
+		sendCancel: boolean,
+	): void {
+		const prefix = `${pieceIndex}:`;
+		for (const [peerKey, pending] of this.pendingRequests) {
+			const peer = this.manager.connections.get(peerKey);
+			for (const reqKey of [...pending]) {
+				if (!reqKey.startsWith(prefix)) continue;
+				pending.delete(reqKey);
+				this.unassignRequest(peerKey, reqKey);
+				const begin = Number(reqKey.slice(prefix.length));
+				const blockIdx = Math.floor(begin / BLOCK_SIZE);
+				if (sendCancel && peer) {
+					peer.sendCancel(pieceIndex, begin, this.blockLength(pieceIndex, blockIdx));
+				}
+			}
+		}
+		this.refreshEndgameMode();
+	}
+
+	private refreshEndgameMode(): void {
+		let remainingBlocks = 0;
+		for (const piece of this.inProgress.values()) {
+			remainingBlocks += piece.total - piece.received;
+		}
+
+		let hasUnstartedMissingPiece = false;
+		for (let i = 0; i < this.metadata.pieceCount; i++) {
+			if (!this.storage.hasPiece(i) && !this.inProgress.has(i)) {
+				hasUnstartedMissingPiece = true;
+				break;
+			}
+		}
+
+		this.endgame =
+			!hasUnstartedMissingPiece &&
+			remainingBlocks > 0 &&
+			remainingBlocks <= PIPELINE_DEPTH * 2;
 	}
 
 	// Resume

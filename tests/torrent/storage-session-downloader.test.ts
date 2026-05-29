@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Store } from "../../src/store/index.ts";
-import { TorrentBridge } from "../../src/torrent/bridge.ts";
+import {
+	deriveRuntimeStatus,
+	normalizeRuntimeMetrics,
+	TorrentBridge,
+} from "../../src/torrent/bridge.ts";
 import { Downloader } from "../../src/torrent/downloader.ts";
 import {
 	resumePathForInfoHash,
@@ -405,6 +409,62 @@ describe("Downloader", () => {
 		});
 	});
 
+	test("uses endgame duplicate requests and cancels redundant final blocks", async () => {
+		await withIsolatedAppData(async () => {
+			await withTempDir(async (dir) => {
+				const fixture = singleFileTorrentFixture({
+					content: patternedBytes(40_000),
+					pieceLength: 40_000,
+				});
+				const storage = new StorageManager(fixture.metadata, dir);
+				await storage.setup();
+				const peerA = new FakePeer("127.0.0.1", 6001, new Set([0]));
+				const peerB = new FakePeer("127.0.0.2", 6002, new Set([0]));
+				const manager = new FakePeerManager([peerA, peerB]);
+				const downloader = new Downloader(
+					fixture.metadata,
+					storage,
+					manager.asManager(),
+					dir,
+				);
+				const piece = splitPieces(
+					fixture.content,
+					fixture.metadata.pieceLength,
+				)[0];
+				if (!piece) throw new Error("missing fixture piece");
+
+				downloader.start();
+
+				expect(peerA.requests).toHaveLength(3);
+				expect(peerB.requests).toHaveLength(3);
+
+				for (const request of [...peerA.requests]) {
+					peerA.emit(
+						"piece",
+						request.index,
+						request.begin,
+						piece.slice(request.begin, request.begin + request.length),
+					);
+				}
+
+				expect(storage.downloadedCount).toBe(1);
+				expect(peerA.cancels).toEqual([]);
+				expect(peerB.cancels).toHaveLength(3);
+
+				const late = peerB.requests[0];
+				if (!late) throw new Error("missing duplicate request");
+				peerB.emit(
+					"piece",
+					late.index,
+					late.begin,
+					piece.slice(late.begin, late.begin + late.length),
+				);
+
+				expect(storage.downloadedCount).toBe(1);
+			});
+		});
+	});
+
 	test("stale resume entries do not mark missing pieces as downloaded", async () => {
 		await withIsolatedAppData(async () => {
 			await withTempDir(async (dir) => {
@@ -441,12 +501,96 @@ describe("Downloader", () => {
 			});
 		});
 	});
+
+	test("multiple downloaders can request blocks concurrently", async () => {
+		await withIsolatedAppData(async () => {
+			await withTempDir(async (dir) => {
+				const fixtureA = singleFileTorrentFixture({
+					name: "a.bin",
+					content: bytesOfLength(12),
+				});
+				const fixtureB = singleFileTorrentFixture({
+					name: "b.bin",
+					content: bytesOfLength(12, 77),
+				});
+				const storageA = new StorageManager(fixtureA.metadata, dir);
+				const storageB = new StorageManager(fixtureB.metadata, dir);
+				await storageA.setup();
+				await storageB.setup();
+				const peerA = new FakePeer("127.0.0.1", 6001, new Set([0, 1, 2]));
+				const peerB = new FakePeer("127.0.0.2", 6002, new Set([0, 1, 2]));
+				const downloaderA = new Downloader(
+					fixtureA.metadata,
+					storageA,
+					new FakePeerManager([peerA]).asManager(),
+					dir,
+				);
+				const downloaderB = new Downloader(
+					fixtureB.metadata,
+					storageB,
+					new FakePeerManager([peerB]).asManager(),
+					dir,
+				);
+
+				downloaderA.start();
+				downloaderB.start();
+
+				expect(peerA.requests.length).toBeGreaterThan(0);
+				expect(peerB.requests.length).toBeGreaterThan(0);
+			});
+		});
+	});
+});
+
+describe("TorrentBridge status derivation", () => {
+	test("does not report downloading until transfer activity starts", () => {
+		expect(deriveRuntimeStatus("downloading", 1, false, false)).toBe(
+			"connecting",
+		);
+		expect(deriveRuntimeStatus("downloading", 1, false, true)).toBe(
+			"downloading",
+		);
+		expect(deriveRuntimeStatus("downloading", 0, false, true)).toBe("stalled");
+		expect(deriveRuntimeStatus("seeding", 0, false, true)).toBe("seeding");
+		expect(deriveRuntimeStatus("downloading", 1, true, true)).toBe("paused");
+	});
+
+	test("clears stale transfer metrics when runtime status is not downloading", () => {
+		expect(normalizeRuntimeMetrics("stalled", 2_200_000, 11, 577)).toEqual({
+			downloadBps: 0,
+			uploadBps: 0,
+			etaSeconds: null,
+		});
+		expect(normalizeRuntimeMetrics("connecting", 2_200_000, 11, 577)).toEqual({
+			downloadBps: 0,
+			uploadBps: 0,
+			etaSeconds: null,
+		});
+		expect(normalizeRuntimeMetrics("downloading", 2_200_000, 11, 577)).toEqual({
+			downloadBps: 2_200_000,
+			uploadBps: 11,
+			etaSeconds: 577,
+		});
+		expect(normalizeRuntimeMetrics("seeding", 2_200_000, 11, 577)).toEqual({
+			downloadBps: 0,
+			uploadBps: 11,
+			etaSeconds: null,
+		});
+	});
 });
 
 function patternedBytes(length: number): Uint8Array {
 	const bytes = new Uint8Array(length);
 	for (let i = 0; i < bytes.length; i++) {
 		bytes[i] = (i * 17 + 31) & 0xff;
+	}
+	return bytes;
+}
+
+function bytesOfLength(length: number, seed = 31): Uint8Array {
+	const bytes = new Uint8Array(length);
+	for (let i = 0; i < bytes.length; i++) {
+		bytes[i] = (seed + i * 13) & 0xff;
 	}
 	return bytes;
 }
