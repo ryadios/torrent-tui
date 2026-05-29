@@ -8,6 +8,7 @@ import type { Downloader } from "./downloader";
 import { log, TorrentMetadata } from "./metadata";
 import type { BencodeValue } from "./parser";
 import { decode } from "./parser";
+import type { PeerConnection } from "./peer/connection";
 import { PeerManager } from "./peer/manager";
 import {
 	loadTrustedResumeData,
@@ -16,8 +17,14 @@ import {
 } from "./resume";
 import { TorrentSession } from "./session";
 import { StorageManager, VerificationCancelledError } from "./storage";
-import { announce } from "./tracker/announce";
 import { TrackerCoordinator } from "./tracker/coordinator";
+import type { TorrentStatus } from "./types";
+import {
+	createUploadedAccumulator,
+	recordRemovedPeerUpload,
+	type UploadedAccumulator,
+	uploadedSnapshot,
+} from "./upload-accounting";
 
 interface TorrentEntry {
 	torrentPath: string;
@@ -25,6 +32,8 @@ interface TorrentEntry {
 	manager: PeerManager | null;
 	trackerCoordinator: TrackerCoordinator | null;
 	downloader: Downloader | null;
+	hasTransferActivity: boolean;
+	uploadedAccumulator: UploadedAccumulator;
 	checkingAbort: AbortController | null;
 	checkingPromise: Promise<void> | null;
 	state: TorrentState;
@@ -132,6 +141,8 @@ export class TorrentBridge {
 					manager: null,
 					trackerCoordinator: null,
 					downloader: null,
+					hasTransferActivity: false,
+					uploadedAccumulator: createUploadedAccumulator(),
 					checkingAbort: null,
 					checkingPromise: null,
 					state: {
@@ -323,6 +334,8 @@ export class TorrentBridge {
 			manager: null,
 			trackerCoordinator: null,
 			downloader: null,
+			hasTransferActivity: false,
+			uploadedAccumulator: createUploadedAccumulator(),
 			checkingAbort: null,
 			checkingPromise: null,
 			state: {
@@ -394,27 +407,20 @@ export class TorrentBridge {
 			await entry.checkingPromise.catch(() => {});
 		}
 		entry.downloader?.stop();
-		await entry.trackerCoordinator?.stop();
-		entry.manager?.close();
+		const trackerStop = entry.trackerCoordinator?.stop();
 
 		if (deleteFiles) {
 			try {
 				const metadata = this.parseTorrent(entry.torrentPath);
-				if (metadata.files.length === 1 && metadata.files[0]) {
-					rmSync(join(this.downloadPath, metadata.files[0].path), {
-						force: true,
-					});
-				} else {
-					rmSync(join(this.downloadPath, metadata.name), {
-						recursive: true,
-						force: true,
-					});
-				}
+				const targetPath = this.targetPathFor(metadata);
+				rmSync(targetPath, { recursive: true, force: true });
 			} catch {
 				// ignore deletion errors
 			}
 		}
 
+		if (trackerStop) await trackerStop;
+		entry.manager?.close();
 		this.torrents.delete(id);
 		this.saveRegistry();
 		this.flushAll();
@@ -422,15 +428,19 @@ export class TorrentBridge {
 
 	async stopAll(): Promise<void> {
 		const checking: Promise<void>[] = [];
+		const trackerStops: Promise<void>[] = [];
+		const managers: PeerManager[] = [];
 		this.restoreCheckQueue = [];
 		for (const entry of this.torrents.values()) {
 			entry.checkingAbort?.abort();
 			if (entry.checkingPromise) checking.push(entry.checkingPromise);
 			entry.downloader?.stop();
-			await entry.trackerCoordinator?.stop();
-			entry.manager?.close();
+			if (entry.trackerCoordinator)
+				trackerStops.push(entry.trackerCoordinator.stop());
+			if (entry.manager) managers.push(entry.manager);
 		}
-		await Promise.allSettled(checking);
+		await Promise.allSettled([...checking, ...trackerStops]);
+		for (const manager of managers) manager.close();
 		this.torrents.clear();
 		this.store.setState({
 			torrents: [],
@@ -448,6 +458,8 @@ export class TorrentBridge {
 
 		const session = new TorrentSession(metadata, this.downloadPath);
 		entry.session = session;
+		entry.hasTransferActivity = false;
+		entry.uploadedAccumulator = createUploadedAccumulator();
 		const checkingAbort = new AbortController();
 		entry.checkingAbort = checkingAbort;
 
@@ -536,13 +548,12 @@ export class TorrentBridge {
 			getSnapshot: () => {
 				const current = this.torrents.get(id);
 				const storage = current?.session?.storage ?? session.storage;
-				const uploaded =
-					current?.manager
-						? [...current.manager.connections.values()].reduce(
-								(sum, conn) => sum + conn.uploadedTotal,
-								0,
-							)
-						: 0;
+				const uploaded = current?.manager
+					? uploadedSnapshot(
+							current.uploadedAccumulator,
+							current.manager.connections.values(),
+						)
+					: 0;
 				const downloaded = storage.downloadedBytes;
 				return {
 					downloaded,
@@ -556,18 +567,7 @@ export class TorrentBridge {
 				if (!current || !currentManager) return;
 				void currentManager.connect(peers).then(() => {
 					if (!this.torrents.has(id)) return;
-					this.updateEntry(id, {
-						status:
-							currentManager.connections.size > 0
-								? current.state.status === "paused"
-									? "paused"
-									: current.session?.status === "seeding"
-										? "seeding"
-										: "downloading"
-								: "stalled",
-						peers: currentManager.connections.size,
-						peerDetails: this.getPeerDetails(currentManager),
-					});
+					this.updateRuntimeEntry(id, session, currentManager, current);
 				});
 			},
 		});
@@ -596,50 +596,34 @@ export class TorrentBridge {
 			return;
 		}
 
-		this.updateEntry(id, {
-			peers: manager.connections.size,
-			peerDetails: this.getPeerDetails(manager),
-			status:
-				manager.connections.size > 0
-					? complete
-						? "seeding"
-						: "downloading"
-					: complete
-						? "seeding"
-						: "stalled",
+		this.updateRuntimeEntry(id, session, manager, entry, {
+			forceStatus: complete ? "seeding" : undefined,
 		});
 
 		manager.on("peerAdded", () => {
-			this.updateEntry(id, {
-				status:
-					entry.state.status === "paused"
-						? "paused"
-						: session.status === "seeding"
-							? "seeding"
-							: "downloading",
-				peers: manager.connections.size,
-				peerDetails: this.getPeerDetails(manager),
-			});
+			this.updateRuntimeEntry(id, session, manager, entry);
 		});
-		manager.on("peerRemoved", () => {
-			this.updateEntry(id, {
-				status:
-					entry.state.status === "paused"
-						? "paused"
-						: manager.connections.size > 0
-							? session.status === "seeding"
-								? "seeding"
-								: "downloading"
-							: session.status === "seeding"
-								? "seeding"
-								: "stalled",
-				peers: manager.connections.size,
-				peerDetails: this.getPeerDetails(manager),
-			});
+		manager.on("peerRemoved", (conn: PeerConnection) => {
+			recordRemovedPeerUpload(entry.uploadedAccumulator, conn);
+			this.updateRuntimeEntry(id, session, manager, entry);
+			if (manager.connections.size === 0 && session.status === "downloading") {
+				trackerCoordinator.refreshNow();
+			}
+		});
+
+		manager.startChoking();
+		const downloader = session.download(manager);
+		entry.downloader = downloader;
+
+		downloader.on("activity", () => {
+			entry.hasTransferActivity = true;
+			if (!this.torrents.has(id)) return;
+			this.updateRuntimeEntry(id, session, manager, entry);
 		});
 
 		session.on("progress", (dl: number, _total: number, speed: number) => {
 			if (!this.torrents.has(id)) return;
+			entry.hasTransferActivity = true;
 			const uploadBps = [...manager.connections.values()].reduce(
 				(sum, c) => sum + c.uploadBytesPerSec,
 				0,
@@ -649,19 +633,14 @@ export class TorrentBridge {
 				speed > 0
 					? Math.round((remaining * metadata.pieceLength) / speed)
 					: null;
-			this.updateEntry(id, {
+			this.updateRuntimeEntry(id, session, manager, entry, {
 				downloadedPieces: dl,
 				downloadBps: Math.round(speed),
 				uploadBps,
 				etaSeconds,
-				peers: manager.connections.size,
-				peerDetails: this.getPeerDetails(manager),
 			});
 		});
 
-		manager.startChoking();
-		const downloader = session.download(manager);
-		entry.downloader = downloader;
 		session.on("complete", () => {
 			trackerCoordinator.markCompleted();
 		});
@@ -710,6 +689,34 @@ export class TorrentBridge {
 		this.scheduleFlush();
 	}
 
+	private updateRuntimeEntry(
+		id: string,
+		session: TorrentSession,
+		manager: PeerManager,
+		entry: TorrentEntry,
+		partial: Partial<TorrentState> & { forceStatus?: TorrentStatus } = {},
+	): void {
+		const { forceStatus, ...statePartial } = partial;
+		const status = deriveRuntimeStatus(
+			forceStatus ?? session.status,
+			manager.connections.size,
+			entry.state.status === "paused",
+			entry.hasTransferActivity,
+		);
+		this.updateEntry(id, {
+			...statePartial,
+			status,
+			...normalizeRuntimeMetrics(
+				status,
+				statePartial.downloadBps ?? entry.state.downloadBps,
+				statePartial.uploadBps ?? entry.state.uploadBps,
+				statePartial.etaSeconds ?? entry.state.etaSeconds,
+			),
+			peers: manager.connections.size,
+			peerDetails: this.getPeerDetails(manager),
+		});
+	}
+
 	private getPeerDetails(manager: PeerManager): TorrentPeerState[] {
 		return [...manager.connections.values()].map((peer) => ({
 			address: `${peer.address}:${peer.port}`,
@@ -736,4 +743,31 @@ export class TorrentBridge {
 		const totalUploadBps = states.reduce((s, t) => s + t.uploadBps, 0);
 		this.store.setState({ torrents: states, totalDownloadBps, totalUploadBps });
 	}
+}
+
+export function deriveRuntimeStatus(
+	sessionStatus: TorrentStatus,
+	peerCount: number,
+	paused: boolean,
+	hasTransferActivity: boolean,
+): TorrentState["status"] {
+	if (paused) return "paused";
+	if (sessionStatus === "seeding") return "seeding";
+	if (peerCount <= 0) return "stalled";
+	return hasTransferActivity ? "downloading" : "connecting";
+}
+
+export function normalizeRuntimeMetrics(
+	status: TorrentState["status"],
+	downloadBps: number,
+	uploadBps: number,
+	etaSeconds: number | null,
+): Pick<TorrentState, "downloadBps" | "uploadBps" | "etaSeconds"> {
+	if (status === "downloading") {
+		return { downloadBps, uploadBps, etaSeconds };
+	}
+	if (status === "seeding") {
+		return { downloadBps: 0, uploadBps, etaSeconds: null };
+	}
+	return { downloadBps: 0, uploadBps: 0, etaSeconds: null };
 }

@@ -17,6 +17,8 @@ interface TrackerState {
 	url: string;
 	timer: unknown | null;
 	inFlight: boolean;
+	inFlightPromise: Promise<void> | null;
+	pendingRefresh: boolean;
 	pendingEvent?: TrackerEvent;
 	backoffMs: number;
 }
@@ -72,6 +74,8 @@ export class TrackerCoordinator {
 				url,
 				timer: null,
 				inFlight: false,
+				inFlightPromise: null,
+				pendingRefresh: false,
 				backoffMs: INITIAL_BACKOFF_MS,
 			});
 		}
@@ -92,6 +96,17 @@ export class TrackerCoordinator {
 		}
 	}
 
+	refreshNow(): void {
+		if (this.stopped) return;
+		for (const state of this.states.values()) {
+			if (state.inFlight) {
+				state.pendingRefresh = true;
+				continue;
+			}
+			this.enqueue(state);
+		}
+	}
+
 	async stop(): Promise<void> {
 		if (this.stopped) return;
 		this.stopped = true;
@@ -102,7 +117,12 @@ export class TrackerCoordinator {
 				this.scheduler.clearTimeout(state.timer);
 				state.timer = null;
 			}
-			pending.push(this.runAnnounce(state, "stopped"));
+			if (state.inFlight) {
+				state.pendingEvent = prioritizeEvent(state.pendingEvent, "stopped");
+				if (state.inFlightPromise) pending.push(state.inFlightPromise);
+			} else {
+				pending.push(this.runAnnounce(state, "stopped"));
+			}
 		}
 		await Promise.allSettled(pending);
 	}
@@ -123,7 +143,19 @@ export class TrackerCoordinator {
 		event?: TrackerEvent,
 	): Promise<void> {
 		if ((this.stopped && event !== "stopped") || state.inFlight) return;
+		const operation = this.runAnnounceBody(state, event);
+		state.inFlightPromise = operation;
+		try {
+			await operation;
+		} finally {
+			if (state.inFlightPromise === operation) state.inFlightPromise = null;
+		}
+	}
 
+	private async runAnnounceBody(
+		state: TrackerState,
+		event?: TrackerEvent,
+	): Promise<void> {
 		state.inFlight = true;
 		if (state.timer) {
 			this.scheduler.clearTimeout(state.timer);
@@ -152,11 +184,16 @@ export class TrackerCoordinator {
 		const pendingEvent = state.pendingEvent;
 		state.pendingEvent = undefined;
 		if (pendingEvent) {
-			void this.runAnnounce(state, pendingEvent);
+			await this.runAnnounce(state, pendingEvent);
 			return;
 		}
 
 		if (this.stopped || event === "stopped" || nextDelayMs === null) return;
+		if (state.pendingRefresh) {
+			state.pendingRefresh = false;
+			await this.runAnnounce(state);
+			return;
+		}
 		state.timer = this.scheduler.setTimeout(() => {
 			state.timer = null;
 			this.enqueue(state);

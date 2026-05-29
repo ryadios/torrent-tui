@@ -256,6 +256,7 @@ export class Downloader extends EventEmitter {
 		piece.blocks[blockIdx] = Buffer.from(block);
 		piece.received++;
 		this.bytesThisSecond += block.length;
+		this.emit("activity", index, begin, block.length);
 
 		if (piece.received === piece.total) {
 			this.finishPiece(index, piece, conn);
