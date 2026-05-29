@@ -111,6 +111,128 @@ describe("TrackerCoordinator", () => {
 
 		expect(events).toEqual(["started", "completed", "stopped"]);
 	});
+
+	test("sends stopped after stop is called during an in-flight announce", async () => {
+		const fixture = singleFileTorrentFixture({
+			announceList: [["http://tracker-a.example/announce"]],
+		});
+		const scheduler = new FakeScheduler();
+		const events: Array<string | undefined> = [];
+		const firstAnnounce = deferred<TrackerResponse>();
+		let calls = 0;
+		const coordinator = new TrackerCoordinator(fixture.metadata, {
+			getSnapshot: () => ({ downloaded: 5, uploaded: 6, left: 0 }),
+			scheduler,
+			announceTracker: async (_url, _metadata, request) => {
+				events.push(request.event);
+				calls++;
+				if (calls === 1) return firstAnnounce.promise;
+				return {
+					complete: 0,
+					incomplete: 0,
+					interval: 60,
+					peers: [],
+				};
+			},
+		});
+
+		coordinator.start();
+		await flush();
+		const stopPromise = coordinator.stop();
+		await flush();
+
+		expect(events).toEqual(["started"]);
+
+		firstAnnounce.resolve({
+			complete: 0,
+			incomplete: 0,
+			interval: 60,
+			peers: [],
+		});
+		await stopPromise;
+
+		expect(events).toEqual(["started", "stopped"]);
+	});
+
+	test("refreshNow announces immediately instead of waiting for the next interval", async () => {
+		const fixture = singleFileTorrentFixture({
+			announceList: [["http://tracker-a.example/announce"]],
+		});
+		const scheduler = new FakeScheduler();
+		const events: Array<string | undefined> = [];
+		const coordinator = new TrackerCoordinator(fixture.metadata, {
+			getSnapshot: () => ({ downloaded: 1, uploaded: 2, left: 3 }),
+			scheduler,
+			announceTracker: async (_url, _metadata, request) => {
+				events.push(request.event);
+				return {
+					complete: 0,
+					incomplete: 0,
+					interval: 300,
+					peers: [],
+				};
+			},
+		});
+
+		coordinator.start();
+		await flush();
+
+		coordinator.refreshNow();
+		await flush();
+
+		expect(events).toEqual(["started", undefined]);
+		expect(scheduler.delays()).toEqual([300_000]);
+	});
+
+	test("refreshNow queues a follow-up announce when one is already in flight", async () => {
+		const fixture = singleFileTorrentFixture({
+			announceList: [["http://tracker-a.example/announce"]],
+		});
+		const scheduler = new FakeScheduler();
+		const snapshot = {
+			downloaded: 1,
+			uploaded: 2,
+			left: 3,
+		};
+		const calls: TrackerAnnounceRequest[] = [];
+		const firstAnnounce = deferred<TrackerResponse>();
+		const coordinator = new TrackerCoordinator(fixture.metadata, {
+			getSnapshot: () => ({ ...snapshot }),
+			scheduler,
+			announceTracker: async (_url, _metadata, request) => {
+				calls.push({ ...request });
+				if (calls.length === 1) return firstAnnounce.promise;
+				return {
+					complete: 0,
+					incomplete: 0,
+					interval: 300,
+					peers: [],
+				};
+			},
+		});
+
+		coordinator.start();
+		await flush();
+		expect(calls).toHaveLength(1);
+
+		snapshot.uploaded = 99;
+		coordinator.refreshNow();
+		await flush();
+		expect(calls).toHaveLength(1);
+
+		firstAnnounce.resolve({
+			complete: 0,
+			incomplete: 0,
+			interval: 300,
+			peers: [],
+		});
+		await flush();
+
+		expect(calls).toHaveLength(2);
+		expect(calls[1]?.event).toBeUndefined();
+		expect(calls[1]?.uploaded).toBe(99);
+		expect(scheduler.delays()).toEqual([300_000]);
+	});
 });
 
 class FakeScheduler {
@@ -142,4 +264,18 @@ class FakeScheduler {
 async function flush(): Promise<void> {
 	await Promise.resolve();
 	await Promise.resolve();
+}
+
+function deferred<T>(): {
+	promise: Promise<T>;
+	resolve: (value: T) => void;
+	reject: (reason?: unknown) => void;
+} {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
 }
