@@ -2,7 +2,11 @@ import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import { decode } from "../parser.ts";
 import { getPeerId } from "../peer/peer-id.ts";
-import type { PeerInfo } from "../types.ts";
+import type {
+	PeerInfo,
+	TrackerAnnounceRequest,
+	TrackerResponse,
+} from "../types.ts";
 
 const TEXT_DECODER = new TextDecoder();
 
@@ -65,7 +69,7 @@ export function parseHTTPCompactPeers(data: Uint8Array): PeerInfo[] {
 	return peers;
 }
 
-export function parseHTTPTrackerResponse(buffer: Uint8Array): PeerInfo[] {
+export function parseHTTPTrackerResponse(buffer: Uint8Array): TrackerResponse {
 	const decoded = decode(buffer);
 
 	if (
@@ -89,40 +93,61 @@ export function parseHTTPTrackerResponse(buffer: Uint8Array): PeerInfo[] {
 	}
 
 	const peersRaw = decoded.peers;
+	const interval = typeof decoded.interval === "number" ? decoded.interval : 1800;
+	const complete = typeof decoded.complete === "number" ? decoded.complete : 0;
+	const incomplete =
+		typeof decoded.incomplete === "number" ? decoded.incomplete : 0;
 
 	// Compact format: binary blob, 6 bytes per IPv4 peer
 	if (peersRaw instanceof Uint8Array) {
-		return parseHTTPCompactPeers(peersRaw);
+		return {
+			complete,
+			incomplete,
+			interval,
+			peers: parseHTTPCompactPeers(peersRaw),
+		};
 	}
 
 	// Dictionary format: list of {ip, port, peer id} dicts (used for IPv6 or non-compact)
 	if (Array.isArray(peersRaw)) {
-		return parseHTTPDictionaryPeers(peersRaw);
+		return {
+			complete,
+			incomplete,
+			interval,
+			peers: parseHTTPDictionaryPeers(peersRaw),
+		};
 	}
 
-	return [];
+	return { complete, incomplete, interval, peers: [] };
 }
 
-async function announceToTracker(
+export function buildHTTPTrackerUrl(
 	url: string,
 	metadata: TorrentMetadata,
-	peerId: Uint8Array,
-	port: number,
-	numwant: number,
-): Promise<PeerInfo[]> {
+	request: TrackerAnnounceRequest,
+): string {
+	const peerId = request.peerId ?? getPeerId();
 	const params = [
 		`info_hash=${encodeBytes(metadata.infoHash)}`,
 		`peer_id=${encodeBytes(peerId)}`,
-		`port=${port}`,
-		`uploaded=0`,
-		`downloaded=0`,
-		`left=${metadata.totalSize}`,
+		`port=${request.port}`,
+		`uploaded=${request.uploaded}`,
+		`downloaded=${request.downloaded}`,
+		`left=${request.left}`,
 		`compact=1`,
-		`event=started`,
-		`numwant=${numwant}`,
-	].join("&");
+		`numwant=${request.numwant}`,
+	];
+	if (request.event) params.push(`event=${request.event}`);
+	const query = params.join("&");
+	return url.includes("?") ? `${url}&${query}` : `${url}?${query}`;
+}
 
-	const fullUrl = url.includes("?") ? `${url}&${params}` : `${url}?${params}`;
+export async function announceHTTPTracker(
+	url: string,
+	metadata: TorrentMetadata,
+	request: TrackerAnnounceRequest,
+): Promise<TrackerResponse> {
+	const fullUrl = buildHTTPTrackerUrl(url, metadata, request);
 
 	// AbortSignal.timeout doesn't abort TCP-level hangs in Bun — use Promise.race
 	const res = await Promise.race([
@@ -140,10 +165,8 @@ async function announceToTracker(
 
 export async function announceHTTP(
 	metadata: TorrentMetadata,
-	port = 6881,
-	numwant = 50,
-): Promise<PeerInfo[]> {
-	const peerId = getPeerId();
+	request: TrackerAnnounceRequest,
+): Promise<TrackerResponse[]> {
 	const urls = [
 		...new Set(
 			metadata.announceList
@@ -153,22 +176,22 @@ export async function announceHTTP(
 	];
 
 	const results = await Promise.allSettled(
-		urls.map((u) => announceToTracker(u, metadata, peerId, port, numwant)),
+		urls.map((u) => announceHTTPTracker(u, metadata, request)),
 	);
 
-	const peers: PeerInfo[] = [];
+	const responses: TrackerResponse[] = [];
 	for (let i = 0; i < results.length; i++) {
 		const r = results[i];
 		const url = urls[i];
 		if (r === undefined || url === undefined) continue;
 		if (r.status === "fulfilled") {
-			peers.push(...r.value);
-			log("tracker", `${url}   ${r.value.length} peers`);
+			responses.push(r.value);
+			log("tracker", `${url}   ${r.value.peers.length} peers`);
 		} else {
 			const reason =
 				r.reason instanceof Error ? r.reason.message : String(r.reason);
 			log("tracker", `${url}   failed  ${reason}`);
 		}
 	}
-	return peers;
+	return responses;
 }

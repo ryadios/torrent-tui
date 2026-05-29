@@ -10,6 +10,18 @@ export interface TrackerResponse {
 	peers: PeerInfo[];
 }
 
+export type TrackerEvent = "started" | "completed" | "stopped";
+
+export interface TrackerAnnounceRequest {
+	port: number;
+	numwant: number;
+	uploaded: number;
+	downloaded: number;
+	left: number;
+	event?: TrackerEvent;
+	peerId?: Uint8Array;
+}
+
 export interface FileInfo {
 	path: string;
 	length: number;

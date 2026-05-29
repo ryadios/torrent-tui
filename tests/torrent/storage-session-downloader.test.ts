@@ -405,6 +405,62 @@ describe("Downloader", () => {
 		});
 	});
 
+	test("uses endgame duplicate requests and cancels redundant final blocks", async () => {
+		await withIsolatedAppData(async () => {
+			await withTempDir(async (dir) => {
+				const fixture = singleFileTorrentFixture({
+					content: patternedBytes(40_000),
+					pieceLength: 40_000,
+				});
+				const storage = new StorageManager(fixture.metadata, dir);
+				await storage.setup();
+				const peerA = new FakePeer("127.0.0.1", 6001, new Set([0]));
+				const peerB = new FakePeer("127.0.0.2", 6002, new Set([0]));
+				const manager = new FakePeerManager([peerA, peerB]);
+				const downloader = new Downloader(
+					fixture.metadata,
+					storage,
+					manager.asManager(),
+					dir,
+				);
+				const piece = splitPieces(
+					fixture.content,
+					fixture.metadata.pieceLength,
+				)[0];
+				if (!piece) throw new Error("missing fixture piece");
+
+				downloader.start();
+
+				expect(peerA.requests).toHaveLength(3);
+				expect(peerB.requests).toHaveLength(3);
+
+				for (const request of [...peerA.requests]) {
+					peerA.emit(
+						"piece",
+						request.index,
+						request.begin,
+						piece.slice(request.begin, request.begin + request.length),
+					);
+				}
+
+				expect(storage.downloadedCount).toBe(1);
+				expect(peerA.cancels).toEqual([]);
+				expect(peerB.cancels).toHaveLength(3);
+
+				const late = peerB.requests[0];
+				if (!late) throw new Error("missing duplicate request");
+				peerB.emit(
+					"piece",
+					late.index,
+					late.begin,
+					piece.slice(late.begin, late.begin + late.length),
+				);
+
+				expect(storage.downloadedCount).toBe(1);
+			});
+		});
+	});
+
 	test("stale resume entries do not mark missing pieces as downloaded", async () => {
 		await withIsolatedAppData(async () => {
 			await withTempDir(async (dir) => {

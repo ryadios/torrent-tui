@@ -27,6 +27,7 @@ export interface TorrentPeerState {
 export interface TorrentState {
 	id: string;
 	name: string;
+	targetPath: string;
 	totalSize: number;
 	pieceLength: number;
 	downloadedPieces: number;

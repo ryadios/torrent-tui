@@ -38,6 +38,7 @@ export class PeerConnection extends EventEmitter {
 	uploadedThisInterval = 0;
 	downloadBytesPerSec = 0;
 	uploadBytesPerSec = 0;
+	uploadedTotal = 0;
 
 	private socket: Socket | null = null;
 	private buf = new MessageBuffer();
@@ -251,6 +252,7 @@ export class PeerConnection extends EventEmitter {
 		payload.set(block, 8);
 		this.write(encodeMsg({ type: MSG.PIECE, payload }));
 		this.uploadedThisInterval += block.length;
+		this.uploadedTotal += block.length;
 	}
 
 	private startKeepalive(): void {

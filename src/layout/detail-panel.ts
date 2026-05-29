@@ -1,4 +1,5 @@
 import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
+import { homedir } from "node:os";
 import type {
 	TorrentFileState,
 	TorrentPeerState,
@@ -40,6 +41,15 @@ function formatBytes(bytes: number): string {
 function formatSpeed(bps: number): string {
 	if (bps <= 0) return "0 B/s";
 	return `${formatBytes(bps)}/s`;
+}
+
+function abbreviateHomePath(path: string): string {
+	const home = homedir();
+	if (path === home) return "~";
+	if (path.startsWith(`${home}/`)) {
+		return `~${path.slice(home.length)}`;
+	}
+	return path;
 }
 
 function truncate(text: string, max: number): string {
@@ -183,6 +193,7 @@ function buildPieceSections(torrent: TorrentState): DetailSections {
 			`Pieces: ${torrent.downloadedPieces}/${torrent.totalPieces} (${formatPercent(torrent.downloadedPieces, torrent.totalPieces)})`,
 			`Piece size: ${formatBytes(torrent.pieceLength)}`,
 			`Status: ${torrent.status}`,
+			`Path: ${abbreviateHomePath(torrent.targetPath)}`,
 		],
 		scrollLines: [],
 	};

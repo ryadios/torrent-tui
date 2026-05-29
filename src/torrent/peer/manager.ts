@@ -56,6 +56,7 @@ export class PeerManager extends EventEmitter {
 
 		conn.on("disconnect", () => {
 			this.connections.delete(key);
+			this.emit("peerRemoved", conn);
 		});
 
 		try {
@@ -106,6 +107,11 @@ export class PeerManager extends EventEmitter {
 
 				socket.on("data", (c: Buffer) => socket.emit("data", c));
 				this.connections.set(key, conn);
+				conn.on("disconnect", () => {
+					this.connections.delete(key);
+					this.emit("peerRemoved", conn);
+				});
+				this.emit("peerAdded", conn);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				log("handshake", `FAIL (inbound)  ${msg}`);

@@ -184,9 +184,9 @@ async function runHandshake(torrentPath: string): Promise<void> {
 }
 
 async function runDownload(torrentPath: string): Promise<void> {
-	const { announce } = await import("./torrent/tracker/announce");
 	const { PeerManager } = await import("./torrent/peer/manager");
 	const { getPeerId, peerIdToString } = await import("./torrent/peer/peer-id");
+	const { TrackerCoordinator } = await import("./torrent/tracker/coordinator");
 	const { metadata, session } = await loadTorrent(torrentPath);
 	const { log } = await import("./torrent/metadata");
 
@@ -195,25 +195,40 @@ async function runDownload(torrentPath: string): Promise<void> {
 
 	await session.start();
 
-	const trackerResult = await announce(metadata).catch(() => null);
-	const peers = trackerResult?.peers ?? [];
-
 	console.log("");
 	const manager = new PeerManager(metadata);
 	await manager.start();
-	await manager.connect(peers);
-
-	if (manager.connections.size === 0) {
-		log("error", "no peers connected — cannot download");
-		manager.close();
-		return;
-	}
+	const trackerCoordinator = new TrackerCoordinator(metadata, {
+		getSnapshot: () => {
+			const downloaded = session.storage.downloadedBytes;
+			const uploaded = [...manager.connections.values()].reduce(
+				(sum, conn) => sum + conn.uploadedTotal,
+				0,
+			);
+			return {
+				downloaded,
+				uploaded,
+				left: Math.max(0, metadata.totalSize - downloaded),
+			};
+		},
+		onPeers: (peers) => {
+			void manager.connect(peers).then(() => {
+				const unchokedNow = manager.getUnchoked().length;
+				log(
+					"peers",
+					`${manager.connections.size} connected   ${unchokedNow} unchoked`,
+				);
+			});
+		},
+	});
+	trackerCoordinator.start();
 
 	const unchoked = manager.getUnchoked().length;
 	log("peers", `${manager.connections.size} connected   ${unchoked} unchoked`);
 
 	manager.startChoking();
 	const downloader = session.download(manager);
+	session.on("complete", () => trackerCoordinator.markCompleted());
 
 	await new Promise<void>((resolve) => {
 		session.on("complete", () => resolve());
@@ -253,6 +268,7 @@ async function runDownload(torrentPath: string): Promise<void> {
 	}
 	console.log(line);
 
+	await trackerCoordinator.stop();
 	manager.close();
 }
 
