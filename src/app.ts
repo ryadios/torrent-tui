@@ -1,4 +1,8 @@
-import { type CliRenderer, createCliRenderer } from "@opentui/core";
+import {
+	type CliRenderer,
+	createCliRenderer,
+	type PasteEvent,
+} from "@opentui/core";
 import { loadConfig } from "./config";
 import { AppController } from "./controllers/app-controller";
 import { AddTorrentDialog } from "./layout/add-torrent-dialog";
@@ -9,6 +13,7 @@ import { StatusBar } from "./layout/status-bar";
 import { ToastManager } from "./layout/toast-manager";
 import { Store } from "./store";
 import { TorrentBridge } from "./torrent/bridge";
+import { isMagnetUri } from "./torrent/magnet";
 import type { LayoutDimensions } from "./types/layout";
 import { calculateLayout } from "./utils/layout";
 
@@ -81,6 +86,10 @@ export class App {
 			return this.addDialog.handleInput(key);
 		};
 
+		this.controller.onDialogPaste = (event: PasteEvent) => {
+			return this.addDialog.handlePaste(event);
+		};
+
 		this.controller.onQuit = async () => {
 			await this.bridge.stopAll();
 			this.renderer.destroy();
@@ -143,11 +152,13 @@ export class App {
 	}
 
 	private async addTorrentInBackground(
-		filePath: string,
+		input: string,
 		filename: string,
 	): Promise<void> {
 		try {
-			const result = await this.bridge.addTorrent(filePath);
+			const result = isMagnetUri(input)
+				? await this.bridge.addMagnet(input)
+				: await this.bridge.addTorrent(input);
 			this.toastManager.show({
 				id: `added-${Date.now()}`,
 				type: result.added ? "success" : "info",

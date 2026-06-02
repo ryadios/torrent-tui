@@ -1,4 +1,4 @@
-import type { CliRenderer, KeyEvent } from "@opentui/core";
+import type { CliRenderer, KeyEvent, PasteEvent } from "@opentui/core";
 import { SIDEBAR_ITEMS } from "../constants";
 import type { ConfirmDialog } from "../layout/confirm-dialog";
 import type { ContentWindow, FocusArea } from "../layout/content-window";
@@ -38,7 +38,8 @@ export class AppController {
 	onAddTorrent?: () => void;
 	onQuit?: () => void;
 	onDialogClose?: () => void;
-	onDialogInput?: (key: string) => boolean;
+	onDialogInput?: (key: KeyEvent) => boolean;
+	onDialogPaste?: (event: PasteEvent) => boolean;
 	onPauseTorrent?: (id: string) => Promise<void> | void;
 	onResumeTorrent?: (id: string) => Promise<void> | void;
 	onStartTorrent?: (id: string) => Promise<void> | void;
@@ -100,6 +101,9 @@ export class AppController {
 
 		this.renderer.keyInput.on("keypress", (key) => {
 			this.handleKeyPress(key);
+		});
+		this.renderer.keyInput.on("paste", (event: PasteEvent) => {
+			this.handlePaste(event);
 		});
 
 		this.refreshView();
@@ -216,8 +220,13 @@ export class AppController {
 				if (key.name === "escape") {
 					this.focusMode = "global";
 					this.onDialogClose?.();
+					key.preventDefault();
+					key.stopPropagation();
 				} else {
-					this.onDialogInput?.(key.name);
+					if (this.onDialogInput?.(key)) {
+						key.preventDefault();
+						key.stopPropagation();
+					}
 				}
 			}
 			return;
@@ -346,8 +355,17 @@ export class AppController {
 		} else if (key.name === "a") {
 			this.focusMode = "dialog";
 			this.onAddTorrent?.();
+			key.preventDefault();
+			key.stopPropagation();
 		} else if (key.name === "q") {
 			this.onQuit?.();
+		}
+	}
+
+	private handlePaste(event: PasteEvent): void {
+		if (this.focusMode !== "dialog" || this._confirmDialog?.getIsOpen()) return;
+		if (this.onDialogPaste?.(event)) {
+			event.preventDefault();
 		}
 	}
 

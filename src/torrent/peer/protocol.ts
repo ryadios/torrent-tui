@@ -9,6 +9,7 @@ export const MSG = {
 	REQUEST: 6,
 	PIECE: 7,
 	CANCEL: 8,
+	EXTENDED: 20,
 } as const;
 
 export type MessageType = (typeof MSG)[keyof typeof MSG];

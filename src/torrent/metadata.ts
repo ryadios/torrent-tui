@@ -18,6 +18,7 @@ export class TorrentMetadata {
 	readonly pieceHashes: Uint8Array[];
 	readonly files: FileInfo[];
 	readonly infoHash: Uint8Array;
+	readonly infoBytes: Uint8Array;
 	readonly announceList: string[][];
 
 	constructor(
@@ -106,9 +107,8 @@ export class TorrentMetadata {
 
 		// Hash the raw bytes from the original file — not a re-encoded version.
 		// BEP 3: must extract the substring directly, not decode-encode roundtrip.
-		this.infoHash = SHA1.hash(
-			extractInfoBytes(rawTorrentBytes),
-		) as unknown as Uint8Array;
+		this.infoBytes = extractInfoBytes(rawTorrentBytes);
+		this.infoHash = SHA1.hash(this.infoBytes) as unknown as Uint8Array;
 
 		// announce list (BEP 12)
 		const announceListRaw = decoded["announce-list"];

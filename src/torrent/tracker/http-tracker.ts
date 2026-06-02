@@ -1,10 +1,10 @@
-import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import { decode } from "../parser.ts";
 import { getPeerId } from "../peer/peer-id.ts";
 import type {
 	PeerInfo,
 	TrackerAnnounceRequest,
+	TrackerAnnounceTarget,
 	TrackerResponse,
 } from "../types.ts";
 
@@ -123,7 +123,7 @@ export function parseHTTPTrackerResponse(buffer: Uint8Array): TrackerResponse {
 
 export function buildHTTPTrackerUrl(
 	url: string,
-	metadata: TorrentMetadata,
+	metadata: TrackerAnnounceTarget,
 	request: TrackerAnnounceRequest,
 ): string {
 	const peerId = request.peerId ?? getPeerId();
@@ -144,7 +144,7 @@ export function buildHTTPTrackerUrl(
 
 export async function announceHTTPTracker(
 	url: string,
-	metadata: TorrentMetadata,
+	metadata: TrackerAnnounceTarget,
 	request: TrackerAnnounceRequest,
 ): Promise<TrackerResponse> {
 	const fullUrl = buildHTTPTrackerUrl(url, metadata, request);
@@ -164,7 +164,7 @@ export async function announceHTTPTracker(
 }
 
 export async function announceHTTP(
-	metadata: TorrentMetadata,
+	metadata: TrackerAnnounceTarget,
 	request: TrackerAnnounceRequest,
 ): Promise<TrackerResponse[]> {
 	const urls = [

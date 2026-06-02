@@ -1,11 +1,14 @@
-import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
-import type { TrackerAnnounceRequest, TrackerResponse } from "../types.ts";
+import type {
+	TrackerAnnounceRequest,
+	TrackerAnnounceTarget,
+	TrackerResponse,
+} from "../types.ts";
 import { announceHTTP } from "./http-tracker.ts";
 import { announceUDP } from "./udp-tracker.ts";
 
 export async function announce(
-	metadata: TorrentMetadata,
+	metadata: TrackerAnnounceTarget,
 	request: Partial<TrackerAnnounceRequest> = {},
 ): Promise<TrackerResponse> {
 	const resolvedRequest: TrackerAnnounceRequest = {

@@ -2,6 +2,7 @@ import type { TorrentState } from "../store";
 
 const ACTIVE_STATUSES = new Set<TorrentState["status"]>([
 	"queued",
+	"metadata",
 	"checking",
 	"connecting",
 	"downloading",

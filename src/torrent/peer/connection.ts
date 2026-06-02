@@ -2,6 +2,21 @@ import { EventEmitter } from "node:events";
 import type { Socket } from "node:net";
 import { createConnection } from "node:net";
 import { log } from "../metadata.ts";
+import {
+	buildExtensionReservedBytes,
+	decodeExtendedMessage,
+	decodeExtensionHandshake,
+	decodeUtMetadataMessage,
+	EXT_HANDSHAKE_ID,
+	encodeExtendedMessage,
+	encodeExtensionHandshake,
+	encodeUtMetadataData,
+	encodeUtMetadataReject,
+	encodeUtMetadataRequest,
+	LOCAL_UT_METADATA_ID,
+	METADATA_BLOCK_SIZE,
+	supportsExtensionProtocol,
+} from "./extension.ts";
 import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { MessageBuffer } from "./message-buffer.ts";
 import { getPeerId } from "./peer-id.ts";
@@ -20,6 +35,12 @@ import {
 const KEEPALIVE_INTERVAL_MS = 120_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 120_000;
+
+interface AdoptConnectedSocketOptions {
+	peerId: string;
+	reserved: Uint8Array;
+	localMetadata?: Uint8Array | null;
+}
 
 export class PeerConnection extends EventEmitter {
 	readonly address: string;
@@ -47,13 +68,23 @@ export class PeerConnection extends EventEmitter {
 	private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
 	private infoHash: Uint8Array;
+	private localMetadata: Uint8Array | null = null;
 	private settle?: (err?: Error) => void;
+	extensionCapable = false;
+	peerExtensions: Map<string, number> = new Map();
+	peerMetadataSize: number | null = null;
 
-	constructor(address: string, port: number, infoHash: Uint8Array) {
+	constructor(
+		address: string,
+		port: number,
+		infoHash: Uint8Array,
+		options: { localMetadata?: Uint8Array | null } = {},
+	) {
 		super();
 		this.address = address;
 		this.port = port;
 		this.infoHash = infoHash;
+		this.localMetadata = options.localMetadata ?? null;
 	}
 
 	connect(): Promise<void> {
@@ -83,7 +114,13 @@ export class PeerConnection extends EventEmitter {
 			}, CONNECT_TIMEOUT_MS);
 
 			sock.once("connect", () => {
-				sock.write(buildHandshake(this.infoHash, getPeerId()));
+				sock.write(
+					buildHandshake(
+						this.infoHash,
+						getPeerId(),
+						buildExtensionReservedBytes(),
+					),
+				);
 				this.resetIdleTimer();
 				// Timeout continues running until handshake completes or times out
 			});
@@ -106,6 +143,36 @@ export class PeerConnection extends EventEmitter {
 		});
 	}
 
+	adoptConnectedSocket(
+		socket: Socket,
+		remainder: Uint8Array,
+		options: AdoptConnectedSocketOptions,
+	): void {
+		this.socket = socket;
+		this.peerId = options.peerId;
+		this.extensionCapable = supportsExtensionProtocol(options.reserved);
+		this.handshakeDone = true;
+		this.handshakeBuffer = new Uint8Array(0);
+		this.localMetadata = options.localMetadata ?? null;
+		this.startKeepalive();
+		this.resetIdleTimer();
+
+		socket.on("data", (chunk: Buffer) => {
+			this.resetIdleTimer();
+			this.onData(new Uint8Array(chunk));
+		});
+		socket.once("error", (err) => {
+			log("error", `${this.address}:${this.port}  ${err.message}`);
+		});
+		socket.once("close", () => {
+			this.cleanup();
+			this.emit("disconnect");
+		});
+
+		if (this.extensionCapable) this.sendExtensionHandshake();
+		if (remainder.length > 0) this.onData(remainder);
+	}
+
 	private onData(chunk: Uint8Array): void {
 		if (!this.handshakeDone) {
 			// Accumulate until we have 68 bytes
@@ -119,6 +186,7 @@ export class PeerConnection extends EventEmitter {
 			try {
 				const result = parseHandshake(this.handshakeBuffer, this.infoHash);
 				this.peerId = result.peerId;
+				this.extensionCapable = supportsExtensionProtocol(result.reserved);
 				this.handshakeDone = true;
 				this.startKeepalive();
 				log(
@@ -126,6 +194,7 @@ export class PeerConnection extends EventEmitter {
 					`${this.address}:${this.port}   ${this.peerId.slice(0, 8)}`,
 				);
 				this.settle?.(); // resolve the connect() promise
+				if (this.extensionCapable) this.sendExtensionHandshake();
 				const remainder = this.handshakeBuffer.slice(HANDSHAKE_LEN);
 				this.handshakeBuffer = new Uint8Array(0);
 				if (remainder.length > 0) this.onMessages(this.buf.push(remainder));
@@ -184,10 +253,66 @@ export class PeerConnection extends EventEmitter {
 						this.emit("request", req.index, req.begin, req.length);
 					}
 					break;
+				case MSG.EXTENDED:
+					if (msg.payload) this.onExtendedMessage(msg.payload);
+					break;
 				case MSG.KEEPALIVE:
 					break;
 			}
 		}
+	}
+
+	private onExtendedMessage(payload: Uint8Array): void {
+		try {
+			const extended = decodeExtendedMessage(payload);
+			if (extended.extensionId === EXT_HANDSHAKE_ID) {
+				const handshake = decodeExtensionHandshake(extended.payload);
+				this.peerExtensions = handshake.extensions;
+				this.peerMetadataSize = handshake.metadataSize ?? null;
+				this.emit("extensionHandshake", handshake);
+				return;
+			}
+			if (extended.extensionId === LOCAL_UT_METADATA_ID) {
+				const msg = decodeUtMetadataMessage(extended.payload);
+				if (msg.msgType === 0) {
+					this.handleMetadataRequest(msg.piece);
+				} else {
+					this.emit("utMetadata", msg);
+				}
+			}
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			log("extension", `${this.address}:${this.port}   ignored  ${msg}`);
+		}
+	}
+
+	private handleMetadataRequest(piece: number): void {
+		if (!this.localMetadata) {
+			this.sendUtMetadataReject(piece);
+			return;
+		}
+		const start = piece * METADATA_BLOCK_SIZE;
+		const end = Math.min(
+			start + METADATA_BLOCK_SIZE,
+			this.localMetadata.length,
+		);
+		if (start < 0 || start >= this.localMetadata.length) {
+			this.sendUtMetadataReject(piece);
+			return;
+		}
+		this.write(
+			encodeMsg({
+				type: MSG.EXTENDED,
+				payload: encodeExtendedMessage(
+					this.peerExtensions.get("ut_metadata") ?? LOCAL_UT_METADATA_ID,
+					encodeUtMetadataData(
+						piece,
+						this.localMetadata.length,
+						this.localMetadata.slice(start, end),
+					),
+				),
+			}),
+		);
 	}
 
 	countPiecesPublic(): number {
@@ -232,6 +357,42 @@ export class PeerConnection extends EventEmitter {
 
 	sendBitfield(bitfield: Uint8Array): void {
 		this.write(encodeMsg({ type: MSG.BITFIELD, payload: bitfield }));
+	}
+
+	setLocalMetadata(infoBytes: Uint8Array): void {
+		this.localMetadata = infoBytes;
+	}
+
+	sendExtensionHandshake(): void {
+		this.write(
+			encodeMsg({
+				type: MSG.EXTENDED,
+				payload: encodeExtensionHandshake({
+					metadataSize: this.localMetadata?.length,
+				}),
+			}),
+		);
+	}
+
+	requestMetadataPiece(piece: number): void {
+		const id = this.peerExtensions.get("ut_metadata");
+		if (!id) return;
+		this.write(
+			encodeMsg({
+				type: MSG.EXTENDED,
+				payload: encodeExtendedMessage(id, encodeUtMetadataRequest(piece)),
+			}),
+		);
+	}
+
+	sendUtMetadataReject(piece: number): void {
+		const id = this.peerExtensions.get("ut_metadata") ?? LOCAL_UT_METADATA_ID;
+		this.write(
+			encodeMsg({
+				type: MSG.EXTENDED,
+				payload: encodeExtendedMessage(id, encodeUtMetadataReject(piece)),
+			}),
+		);
 	}
 
 	sendChoke(): void {

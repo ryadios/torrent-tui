@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { createSocket } from "node:dgram";
-import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import { getPeerId } from "../peer/peer-id.ts";
 import type {
 	PeerInfo,
 	TrackerAnnounceRequest,
+	TrackerAnnounceTarget,
 	TrackerEvent,
 	TrackerResponse,
 } from "../types.ts";
@@ -32,7 +32,7 @@ function buildConnectRequest(): { buf: Buffer; txId: number } {
 
 function buildAnnounceRequest(
 	connId: bigint, // treated as unsigned
-	metadata: TorrentMetadata,
+	metadata: TrackerAnnounceTarget,
 	request: TrackerAnnounceRequest,
 ): { buf: Buffer; txId: number } {
 	const buf = Buffer.alloc(98);
@@ -146,7 +146,7 @@ function sendAndReceive(
 
 export async function announceUDP(
 	url: string,
-	metadata: TorrentMetadata,
+	metadata: TrackerAnnounceTarget,
 	request: TrackerAnnounceRequest,
 ): Promise<TrackerResponse> {
 	const parsed = new URL(url);

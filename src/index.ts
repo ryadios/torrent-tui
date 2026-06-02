@@ -21,11 +21,17 @@ async function printHelp(): Promise<void> {
 Usage:
   torrent-tui                         Start the terminal UI
   torrent-tui <file.torrent>          Start the TUI and add the torrent
+  torrent-tui <magnet-uri>            Start the TUI and fetch magnet metadata
   torrent-tui <file.torrent> --verify Verify local pieces and trackers
   torrent-tui <file.torrent> --handshake
                                       Connect to peers and print handshake summary
-  torrent-tui <file.torrent> --download
+  torrent-tui <file.torrent|magnet> --download
                                       Download from the command line
+
+Magnet links:
+  Supported for tracker-backed magnets and magnets with x.pe peers.
+  DHT-only magnets require the planned DHT phase.
+  --verify and --handshake can use a magnet after its metadata is cached.
 
 Options:
   --help, -h                          Show this help
@@ -40,6 +46,27 @@ function validateTorrentArg(arg: string): string {
 		fail(`Error: File not found: '${arg}'`);
 	}
 	return arg;
+}
+
+async function resolveTorrentArg(arg: string): Promise<string> {
+	const { isMagnetUri } = await import("./torrent/magnet");
+	if (!isMagnetUri(arg)) return validateTorrentArg(arg);
+	const { resolveMagnetToTorrent } = await import("./torrent/magnet-resolver");
+	const result = await resolveMagnetToTorrent(arg);
+	return result.torrentPath;
+}
+
+async function cachedTorrentArg(arg: string): Promise<string> {
+	const { isMagnetUri, parseMagnetUri } = await import("./torrent/magnet");
+	if (!isMagnetUri(arg)) return validateTorrentArg(arg);
+	const { metadataCachePath, readCachedMetadata } = await import(
+		"./torrent/metadata-cache"
+	);
+	const magnet = parseMagnetUri(arg);
+	if (!readCachedMetadata(magnet.infoHashHex)) {
+		fail("Error: cached metadata not found; add or download the magnet first");
+	}
+	return metadataCachePath(magnet.infoHashHex);
 }
 
 function sep(): void {
@@ -298,25 +325,34 @@ async function main() {
 	const isDownload = args.includes("--download");
 
 	if (torrentArg) {
-		const torrentPath = validateTorrentArg(torrentArg);
+		const { isMagnetUri } = await import("./torrent/magnet");
+		const torrentPath = isMagnetUri(torrentArg)
+			? torrentArg
+			: validateTorrentArg(torrentArg);
 
 		if (isVerify) {
-			await runVerify(torrentPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			const resolvedPath = await cachedTorrentArg(torrentPath);
+			await runVerify(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
 		}
 
 		if (isHandshake) {
-			await runHandshake(torrentPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			const resolvedPath = await cachedTorrentArg(torrentPath);
+			await runHandshake(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
 		}
 
 		if (isDownload) {
-			await runDownload(torrentPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			const resolvedPath = await resolveTorrentArg(torrentPath).catch(
+				(e: unknown) =>
+					fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
+			);
+			await runDownload(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
 		}

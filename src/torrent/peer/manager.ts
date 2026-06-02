@@ -3,6 +3,7 @@ import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import type { PeerInfo } from "../types.ts";
 import { PeerConnection } from "./connection.ts";
+import { buildExtensionReservedBytes } from "./extension.ts";
 import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { PeerListener } from "./listener.ts";
 import { getPeerId } from "./peer-id.ts";
@@ -12,6 +13,7 @@ export class PeerManager extends EventEmitter {
 	private listener: PeerListener;
 	private maxConnections: number;
 	private infoHash: Uint8Array;
+	private infoBytes: Uint8Array;
 	private pieceCount: number;
 	private chokeTimer: ReturnType<typeof setInterval> | null = null;
 	private optimisticTimer: ReturnType<typeof setInterval> | null = null;
@@ -21,6 +23,7 @@ export class PeerManager extends EventEmitter {
 	constructor(metadata: TorrentMetadata, maxConnections = 50) {
 		super();
 		this.infoHash = metadata.infoHash;
+		this.infoBytes = metadata.infoBytes;
 		this.pieceCount = metadata.pieceCount;
 		this.maxConnections = maxConnections;
 		this.listener = new PeerListener();
@@ -47,7 +50,9 @@ export class PeerManager extends EventEmitter {
 		const key = `${ip}:${port}`;
 		if (this.connections.has(key)) return;
 
-		const conn = new PeerConnection(ip, port, this.infoHash);
+		const conn = new PeerConnection(ip, port, this.infoHash, {
+			localMetadata: this.infoBytes,
+		});
 
 		conn.on("bitfield", () => {
 			if (conn.countPiecesPublic() > 0 && !conn.amInterested)
@@ -83,7 +88,13 @@ export class PeerManager extends EventEmitter {
 
 			try {
 				const result = parseHandshake(buf, this.infoHash);
-				socket.write(buildHandshake(this.infoHash, getPeerId()));
+				socket.write(
+					buildHandshake(
+						this.infoHash,
+						getPeerId(),
+						buildExtensionReservedBytes(),
+					),
+				);
 
 				const ip = socket.remoteAddress ?? "unknown";
 				const port = socket.remotePort ?? 0;
@@ -93,23 +104,22 @@ export class PeerManager extends EventEmitter {
 					`${key.padEnd(50)}  ok   ${result.peerId.slice(0, 8)}  (inbound)`,
 				);
 
-				// Wrap the existing socket in a PeerConnection
 				const conn = new PeerConnection(ip, port, this.infoHash);
-				// Hand off the already-connected socket by replaying the remainder
-				(conn as unknown as { socket: typeof socket }).socket = socket;
-				(conn as unknown as { handshakeDone: boolean }).handshakeDone = true;
-				(conn as unknown as { peerId: string }).peerId = result.peerId;
-
 				const remainder = buf.slice(HANDSHAKE_LEN);
-				if (remainder.length > 0) {
-					socket.emit("data", Buffer.from(remainder));
-				}
-
-				socket.on("data", (c: Buffer) => socket.emit("data", c));
-				this.connections.set(key, conn);
+				conn.on("bitfield", () => {
+					if (conn.countPiecesPublic() > 0 && !conn.amInterested) {
+						conn.sendInterested();
+					}
+				});
 				conn.on("disconnect", () => {
 					this.connections.delete(key);
 					this.emit("peerRemoved", conn);
+				});
+				this.connections.set(key, conn);
+				conn.adoptConnectedSocket(socket, remainder, {
+					peerId: result.peerId,
+					reserved: result.reserved,
+					localMetadata: this.infoBytes,
 				});
 				this.emit("peerAdded", conn);
 			} catch (err) {

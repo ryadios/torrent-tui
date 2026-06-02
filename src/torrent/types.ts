@@ -22,6 +22,12 @@ export interface TrackerAnnounceRequest {
 	peerId?: Uint8Array;
 }
 
+export interface TrackerAnnounceTarget {
+	infoHash: Uint8Array;
+	totalSize: number;
+	announceList: string[][];
+}
+
 export interface FileInfo {
 	path: string;
 	length: number;

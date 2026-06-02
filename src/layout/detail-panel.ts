@@ -159,11 +159,19 @@ function buildPeerSections(
 	};
 }
 
-function buildFileRow(file: TorrentFileState, widths: number[]): string {
+function buildFileRow(
+	file: TorrentFileState,
+	torrentName: string,
+	widths: number[],
+): string {
 	const [sizeW, pathW] = widths;
+	const prefix = `${torrentName}/`;
+	const displayPath = file.path.startsWith(prefix)
+		? file.path.slice(prefix.length)
+		: file.path;
 	return [
 		padCell(formatBytes(file.length), sizeW ?? 0, "right"),
-		padCell(file.path, pathW ?? 0),
+		padCell(displayPath, pathW ?? 0),
 	].join(" ");
 }
 
@@ -175,6 +183,7 @@ function buildFileSections(
 	return {
 		fixedLines: [
 			`Files: ${torrent.files.length}`,
+			`Download path: ${abbreviateHomePath(torrent.targetPath)}`,
 			[
 				padCell("Size", widths[0] ?? 0, "right"),
 				padCell("Path", widths[1] ?? 0),
@@ -183,7 +192,9 @@ function buildFileSections(
 		scrollLines:
 			torrent.files.length === 0
 				? ["No files"]
-				: torrent.files.map((file) => buildFileRow(file, widths)),
+				: torrent.files.map((file) =>
+						buildFileRow(file, torrent.name, widths),
+					),
 	};
 }
 
