@@ -5,6 +5,8 @@ import type { Store, TorrentPeerState, TorrentState } from "../store";
 import { writeJsonAtomic } from "../utils/json";
 import { getDataDir, resolvePath } from "../utils/paths";
 import type { Downloader } from "./downloader";
+import { parseMagnetUri } from "./magnet";
+import { resolveMagnetToTorrent } from "./magnet-resolver";
 import { log, TorrentMetadata } from "./metadata";
 import type { BencodeValue } from "./parser";
 import { decode } from "./parser";
@@ -365,6 +367,83 @@ export class TorrentBridge {
 		return { id, name: metadata.name, added: true };
 	}
 
+	async addMagnet(uri: string): Promise<AddTorrentResult> {
+		const magnet = parseMagnetUri(uri);
+		const id = magnet.infoHashHex;
+		const name = magnet.displayName ?? `magnet:${id.slice(0, 12)}`;
+
+		if (this.torrents.has(id)) return { id, name, added: false };
+
+		const entry: TorrentEntry = {
+			torrentPath: "",
+			session: null,
+			manager: null,
+			trackerCoordinator: null,
+			downloader: null,
+			hasTransferActivity: false,
+			uploadedAccumulator: createUploadedAccumulator(),
+			checkingAbort: null,
+			checkingPromise: null,
+			state: {
+				id,
+				name,
+				targetPath: this.downloadPath,
+				totalSize: 0,
+				pieceLength: 0,
+				downloadedPieces: 0,
+				totalPieces: 0,
+				status: "metadata",
+				downloadBps: 0,
+				uploadBps: 0,
+				peers: magnet.peers.length,
+				peerDetails: [],
+				files: [],
+				etaSeconds: null,
+			},
+		};
+		this.torrents.set(id, entry);
+		this.flushAll();
+
+		try {
+			const result = await resolveMagnetToTorrent(uri, {
+				onProgress: (progress) => {
+					this.updateEntry(id, {
+						status: progress.status,
+						peers: progress.peers,
+					});
+				},
+			});
+			const metadata = this.parseTorrent(result.torrentPath);
+			entry.torrentPath = result.torrentPath;
+			entry.state = {
+				...entry.state,
+				name: metadata.name,
+				targetPath: this.targetPathFor(metadata),
+				totalSize: metadata.totalSize,
+				pieceLength: metadata.pieceLength,
+				downloadedPieces: 0,
+				totalPieces: metadata.pieceCount,
+				status: "queued",
+				peers: 0,
+				files: metadata.files.map((file) => ({
+					path: file.path,
+					length: file.length,
+				})),
+			};
+			this.saveRegistry();
+			this.flushAll();
+			return { id, name: metadata.name, added: true };
+		} catch (err) {
+			this.updateEntry(id, {
+				status: "stalled",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
+			throw err;
+		}
+	}
+
 	async startTorrent(id: string): Promise<void> {
 		const entry = this.torrents.get(id);
 		if (!entry || entry.session !== null) return;
@@ -605,6 +684,9 @@ export class TorrentBridge {
 		});
 		manager.on("peerRemoved", (conn: PeerConnection) => {
 			recordRemovedPeerUpload(entry.uploadedAccumulator, conn);
+			if (manager.connections.size === 0) {
+				entry.hasTransferActivity = false;
+			}
 			this.updateRuntimeEntry(id, session, manager, entry);
 			if (manager.connections.size === 0 && session.status === "downloading") {
 				trackerCoordinator.refreshNow();
@@ -672,10 +754,12 @@ export class TorrentBridge {
 	}
 
 	private saveRegistry(): void {
-		const entries = [...this.torrents.entries()].map(([infoHash, entry]) => ({
-			infoHash,
-			torrentPath: entry.torrentPath,
-		}));
+		const entries = [...this.torrents.entries()]
+			.filter(([, entry]) => entry.torrentPath.length > 0)
+			.map(([infoHash, entry]) => ({
+				infoHash,
+				torrentPath: entry.torrentPath,
+			}));
 		writeJsonAtomic(this.registryPath(), {
 			schemaVersion: 1,
 			torrents: entries,

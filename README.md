@@ -54,7 +54,8 @@ From inside the app:
 | --- | --- |
 | `j` / `k` or arrow keys | Move selection |
 | `Tab` | Change focus |
-| `a` | Add a `.torrent` file |
+| `a` | Add a `.torrent` file or magnet link |
+| `/` in add dialog | Type a magnet link manually |
 | `Space` | Pause or resume the selected torrent |
 | `d` | Remove the selected torrent |
 | `D` | Remove the selected torrent and downloaded files |
@@ -68,18 +69,24 @@ The package also exposes a few command-line checks around the same torrent engin
 torrent-tui --help
 torrent-tui --version
 torrent-tui file.torrent
+torrent-tui 'magnet:?xt=urn:btih:...'
 torrent-tui file.torrent --verify
 torrent-tui file.torrent --handshake
 torrent-tui file.torrent --download
+torrent-tui 'magnet:?xt=urn:btih:...' --download
 ```
 
 | Command | Description |
 | --- | --- |
 | `torrent-tui` | Start the terminal UI. |
 | `torrent-tui <file.torrent>` | Start the TUI and add the torrent. |
+| `torrent-tui <magnet-uri>` | Start the TUI, fetch magnet metadata, cache it, and start the torrent. |
 | `torrent-tui <file.torrent> --verify` | Create storage and verify local pieces. |
 | `torrent-tui <file.torrent> --handshake` | Connect to peers and print a connection summary. |
 | `torrent-tui <file.torrent> --download` | Run the downloader without launching the TUI. |
+| `torrent-tui <magnet-uri> --download` | Fetch magnet metadata, cache it, then run the downloader without launching the TUI. |
+
+Magnet support currently covers BitTorrent v1 `btih` magnets that include trackers (`tr`) or explicit peers (`x.pe`). DHT-only trackerless magnets are planned for the DHT phase. After metadata is cached, `--verify` and `--handshake` can use the same magnet URI.
 
 ## Configuration
 
@@ -120,6 +127,7 @@ The TUI shows detailed per-torrent states while keeping the sidebar filters simp
 | State | Meaning |
 | --- | --- |
 | `Queued` | The `.torrent` was accepted and is waiting for engine startup. |
+| `Metadata` | A magnet link was accepted and metadata is being fetched from peers. |
 | `Checking` | Local files are being checked against torrent piece hashes. |
 | `Connecting` | Trackers were contacted and the client is connecting to peers. |
 | `Downloading` | Pieces are actively being requested or received. |
@@ -161,7 +169,7 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 | Peer handshakes and piece download | Available |
 | Resume data | Available |
 | Multi-torrent TUI | Available |
-| Magnet links | Not included yet |
+| Magnet links | Available for tracker-backed v1 magnets |
 | Standalone binaries | Not included yet |
 
 ## Development
