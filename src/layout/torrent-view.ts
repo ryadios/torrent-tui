@@ -85,6 +85,8 @@ function formatStatus(status: TorrentState["status"]): string {
 	switch (status) {
 		case "queued":
 			return "Queued";
+		case "metadata":
+			return "Metadata";
 		case "checking":
 			return "Checking";
 		case "connecting":
@@ -271,6 +273,7 @@ export class TorrentTable {
 					return theme.accentHover;
 				case "connecting":
 				case "queued":
+				case "metadata":
 					return theme.fgSecondary;
 				case "stalled":
 				case "paused":
