@@ -26,12 +26,22 @@ function truncateName(name: string): string {
 	return name.length > max ? `${name.slice(0, max - 1)}…` : name;
 }
 
+const TAB_INDICATOR = "Tab: switch tabs";
+
+function truncateMiddle(text: string, maxLen: number): string {
+	if (text.length <= maxLen) return text;
+	if (maxLen <= 1) return "…";
+	const half = Math.floor((maxLen - 1) / 2);
+	const tail = maxLen - 1 - half;
+	return `${text.slice(0, half)}…${text.slice(-tail)}`;
+}
+
 function shortenPath(fullPath: string, maxLen: number): string {
 	const home = homedir();
 	const short = fullPath.startsWith(home)
 		? `~${fullPath.slice(home.length)}`
 		: fullPath;
-	return short.length > maxLen ? `…${short.slice(-(maxLen - 1))}` : short;
+	return truncateMiddle(short, maxLen);
 }
 
 function setBg(node: BoxRenderable, bg: string | undefined): void {
@@ -55,6 +65,7 @@ export class AddTorrentDialog {
 	private filesSection: BoxRenderable | null = null;
 	private magnetSection: BoxRenderable | null = null;
 	private folderHintRow: BoxRenderable | null = null;
+	private folderPathText: TextRenderable | null = null;
 
 	onSelect?: (input: string) => void;
 
@@ -92,6 +103,7 @@ export class AddTorrentDialog {
 		this.filesSection = null;
 		this.magnetSection = null;
 		this.folderHintRow = null;
+		this.folderPathText = null;
 	}
 
 	getIsOpen(): boolean {
@@ -174,8 +186,8 @@ export class AddTorrentDialog {
 		if (this.magnetSection) {
 			this.magnetSection.visible = this.focus === "magnet";
 		}
-		if (this.folderHintRow) {
-			this.folderHintRow.visible = this.focus === "files";
+		if (this.folderPathText) {
+			this.folderPathText.visible = this.focus === "files";
 		}
 		if (this.input) {
 			if (this.focus === "magnet") {
@@ -331,20 +343,30 @@ export class AddTorrentDialog {
 
 		container.add(new BoxRenderable(this.renderer, { flexGrow: 1 }));
 
-		// Folder hint — shown at the bottom of the Files tab
+		// Bottom bar: folder path (left, Files tab only) + tab indicator (right, always)
 		this.folderHintRow = new BoxRenderable(this.renderer, {
 			width: INNER_W,
 			height: 1,
+			flexDirection: "row",
 			paddingLeft: MARGIN,
 			paddingRight: MARGIN,
 		});
-		const maxPathLen = INNER_W - MARGIN * 2;
-		this.folderHintRow.add(
+		const maxPathLen = INNER_W - MARGIN * 2 - TAB_INDICATOR.length - 2;
+		this.folderPathText = new TextRenderable(this.renderer, {
+			content: shortenPath(this.torrentFolder, maxPathLen),
+			fg: theme.fgMuted,
+		});
+		this.folderHintRow.add(this.folderPathText);
+		const tabIndicatorBox = new BoxRenderable(this.renderer, {
+			marginLeft: "auto",
+		});
+		tabIndicatorBox.add(
 			new TextRenderable(this.renderer, {
-				content: shortenPath(this.torrentFolder, maxPathLen),
+				content: TAB_INDICATOR,
 				fg: theme.fgMuted,
 			}),
 		);
+		this.folderHintRow.add(tabIndicatorBox);
 		container.add(this.folderHintRow);
 
 		this.renderer.root.add(container);
