@@ -332,26 +332,27 @@ async function main() {
 
 		if (isVerify) {
 			const resolvedPath = await cachedTorrentArg(torrentPath);
-			await runVerify(resolvedPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			await runVerify(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
 		}
 
 		if (isHandshake) {
 			const resolvedPath = await cachedTorrentArg(torrentPath);
-			await runHandshake(resolvedPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			await runHandshake(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
 		}
 
 		if (isDownload) {
-			const resolvedPath = await resolveTorrentArg(torrentPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			const resolvedPath = await resolveTorrentArg(torrentPath).catch(
+				(e: unknown) =>
+					fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
-			await runDownload(resolvedPath).catch((e) =>
-				fail(`Error: ${e instanceof Error ? e.message : e}`),
+			await runDownload(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
 		}

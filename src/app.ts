@@ -1,4 +1,8 @@
-import { type CliRenderer, createCliRenderer } from "@opentui/core";
+import {
+	type CliRenderer,
+	createCliRenderer,
+	type PasteEvent,
+} from "@opentui/core";
 import { loadConfig } from "./config";
 import { AppController } from "./controllers/app-controller";
 import { AddTorrentDialog } from "./layout/add-torrent-dialog";
@@ -82,7 +86,7 @@ export class App {
 			return this.addDialog.handleInput(key);
 		};
 
-		this.controller.onDialogPaste = (event) => {
+		this.controller.onDialogPaste = (event: PasteEvent) => {
 			return this.addDialog.handlePaste(event);
 		};
 

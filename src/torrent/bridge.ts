@@ -6,7 +6,10 @@ import { writeJsonAtomic } from "../utils/json";
 import { getDataDir, resolvePath } from "../utils/paths";
 import type { Downloader } from "./downloader";
 import { parseMagnetUri } from "./magnet";
-import { resolveMagnetToTorrent } from "./magnet-resolver";
+import {
+	type MagnetResolveProgress,
+	resolveMagnetToTorrent,
+} from "./magnet-resolver";
 import { log, TorrentMetadata } from "./metadata";
 import type { BencodeValue } from "./parser";
 import { decode } from "./parser";
@@ -20,7 +23,7 @@ import {
 import { TorrentSession } from "./session";
 import { StorageManager, VerificationCancelledError } from "./storage";
 import { TrackerCoordinator } from "./tracker/coordinator";
-import type { TorrentStatus } from "./types";
+import type { FileInfo, TorrentStatus } from "./types";
 import {
 	createUploadedAccumulator,
 	recordRemovedPeerUpload,
@@ -30,6 +33,7 @@ import {
 
 interface TorrentEntry {
 	torrentPath: string;
+	magnetUri?: string;
 	session: TorrentSession | null;
 	manager: PeerManager | null;
 	trackerCoordinator: TrackerCoordinator | null;
@@ -43,7 +47,11 @@ interface TorrentEntry {
 
 interface SessionRegistry {
 	schemaVersion: number;
-	torrents: Array<{ infoHash: string; torrentPath: string }>;
+	torrents: Array<{
+		infoHash: string;
+		torrentPath: string;
+		magnetUri?: string;
+	}>;
 }
 
 interface RestoreCheckJob {
@@ -105,9 +113,46 @@ export class TorrentBridge {
 		let current = 0;
 		this.restoreCheckQueue = [];
 
-		for (const { infoHash, torrentPath } of registry.torrents) {
+		for (const { infoHash, torrentPath, magnetUri } of registry.torrents) {
 			current++;
-			if (!existsSync(torrentPath)) continue;
+			if (!torrentPath || !existsSync(torrentPath)) {
+				if (!magnetUri) continue;
+				try {
+					const magnet = parseMagnetUri(magnetUri);
+					const entry: TorrentEntry = {
+						torrentPath: "",
+						magnetUri,
+						session: null,
+						manager: null,
+						trackerCoordinator: null,
+						downloader: null,
+						hasTransferActivity: false,
+						uploadedAccumulator: createUploadedAccumulator(),
+						checkingAbort: null,
+						checkingPromise: null,
+						state: {
+							id: infoHash,
+							name: magnet.displayName ?? `magnet:${infoHash.slice(0, 12)}`,
+							targetPath: this.downloadPath,
+							totalSize: 0,
+							pieceLength: 0,
+							downloadedPieces: 0,
+							totalPieces: 0,
+							status: "stalled",
+							downloadBps: 0,
+							uploadBps: 0,
+							peers: magnet.peers.length,
+							peerDetails: [],
+							files: [],
+							etaSeconds: null,
+						},
+					};
+					this.torrents.set(infoHash, entry);
+				} catch {
+					// skip invalid magnet registry entries
+				}
+				continue;
+			}
 			try {
 				const metadata = this.parseTorrent(torrentPath);
 				const actualId = Buffer.from(metadata.infoHash).toString("hex");
@@ -139,6 +184,7 @@ export class TorrentBridge {
 
 				const entry: TorrentEntry = {
 					torrentPath,
+					magnetUri,
 					session: null,
 					manager: null,
 					trackerCoordinator: null,
@@ -376,6 +422,7 @@ export class TorrentBridge {
 
 		const entry: TorrentEntry = {
 			torrentPath: "",
+			magnetUri: uri,
 			session: null,
 			manager: null,
 			trackerCoordinator: null,
@@ -406,7 +453,7 @@ export class TorrentBridge {
 
 		try {
 			const result = await resolveMagnetToTorrent(uri, {
-				onProgress: (progress) => {
+				onProgress: (progress: MagnetResolveProgress) => {
 					this.updateEntry(id, {
 						status: progress.status,
 						peers: progress.peers,
@@ -425,7 +472,7 @@ export class TorrentBridge {
 				totalPieces: metadata.pieceCount,
 				status: "queued",
 				peers: 0,
-				files: metadata.files.map((file) => ({
+				files: metadata.files.map((file: FileInfo) => ({
 					path: file.path,
 					length: file.length,
 				})),
@@ -452,7 +499,23 @@ export class TorrentBridge {
 			await entry.checkingPromise.catch(() => {});
 			if (!this.torrents.has(id)) return;
 		}
-		const metadata = this.parseTorrent(entry.torrentPath);
+		let torrentPath = entry.torrentPath;
+		if (!torrentPath && entry.magnetUri) {
+			this.updateEntry(id, { status: "metadata" });
+			const result = await resolveMagnetToTorrent(entry.magnetUri, {
+				onProgress: (progress: MagnetResolveProgress) => {
+					this.updateEntry(id, {
+						status: progress.status,
+						peers: progress.peers,
+					});
+				},
+			});
+			torrentPath = result.torrentPath;
+			entry.torrentPath = torrentPath;
+			this.saveRegistry();
+		}
+		if (!torrentPath) throw new Error("Missing torrent metadata");
+		const metadata = this.parseTorrent(torrentPath);
 		await this.runDownload(id, metadata);
 	}
 
@@ -755,10 +818,11 @@ export class TorrentBridge {
 
 	private saveRegistry(): void {
 		const entries = [...this.torrents.entries()]
-			.filter(([, entry]) => entry.torrentPath.length > 0)
+			.filter(([, entry]) => entry.torrentPath.length > 0 || entry.magnetUri)
 			.map(([infoHash, entry]) => ({
 				infoHash,
 				torrentPath: entry.torrentPath,
+				magnetUri: entry.magnetUri,
 			}));
 		writeJsonAtomic(this.registryPath(), {
 			schemaVersion: 1,

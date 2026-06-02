@@ -152,6 +152,27 @@ describe("AddTorrentDialog", () => {
 		});
 	});
 
+	test("wraps long pasted magnet links inside the dialog", async () => {
+		await withTempDir(async (dir) => {
+			const setup = await setupDialog(dir);
+			try {
+				const magnet = `magnet:?xt=urn:btih:${"a".repeat(80)}&dn=${"b".repeat(40)}`;
+
+				setup.mockInput.pressKey("a");
+				await setup.mockInput.pasteBracketedText(magnet);
+				await setup.renderOnce();
+				const frame = setup.captureCharFrame();
+				const wrappedLines = frame
+					.split("\n")
+					.filter((line) => line.includes("aaaaaaaaaa"));
+
+				expect(wrappedLines.length).toBeGreaterThan(1);
+			} finally {
+				setup.renderer.destroy();
+			}
+		});
+	});
+
 	test("removes the input frame when the dialog closes", async () => {
 		await withTempDir(async (dir) => {
 			const setup = await setupDialog(dir);

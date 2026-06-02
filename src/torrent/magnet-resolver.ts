@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { type MagnetInfo, parseMagnetUri } from "./magnet.ts";
+import { TorrentMetadata } from "./metadata.ts";
 import {
 	buildTorrentFileFromInfo,
 	MetadataPieceAssembler,
@@ -8,6 +9,7 @@ import {
 	verifyInfoBytes,
 	writeCachedMetadata,
 } from "./metadata-cache.ts";
+import { type BencodeValue, decode } from "./parser.ts";
 import { PeerConnection } from "./peer/connection.ts";
 import {
 	METADATA_BLOCK_SIZE,
@@ -17,6 +19,7 @@ import { announce } from "./tracker/announce.ts";
 import type { PeerInfo, TrackerAnnounceTarget } from "./types.ts";
 
 const METADATA_TIMEOUT_MS = 60_000;
+const MAX_METADATA_SIZE = 64 * 1024 * 1024;
 
 export interface MagnetResolveProgress {
 	status: "metadata" | "stalled";
@@ -63,6 +66,7 @@ export async function resolveMagnetToTorrent(
 		infoBytes,
 		announceList: magnet.trackers,
 	});
+	await announceResolvedMagnet(magnet, rawTorrent);
 	const torrentPath = writeCachedMetadata(magnet.infoHashHex, rawTorrent);
 	return { magnet, torrentPath, fromCache: false };
 }
@@ -75,7 +79,11 @@ async function discoverMagnetPeers(magnet: MagnetInfo): Promise<PeerInfo[]> {
 	};
 	const trackerPeers =
 		magnet.trackers.length > 0
-			? (await announce(target, { left: 0 }).catch(() => ({ peers: [] }))).peers
+			? (
+					await announce(target, { left: 1, event: "started" }).catch(() => ({
+						peers: [],
+					}))
+				).peers
 			: [];
 	const seen = new Set<string>();
 	const peers: PeerInfo[] = [];
@@ -86,6 +94,32 @@ async function discoverMagnetPeers(magnet: MagnetInfo): Promise<PeerInfo[]> {
 		peers.push(peer);
 	}
 	return peers;
+}
+
+async function announceResolvedMagnet(
+	magnet: MagnetInfo,
+	rawTorrent: Uint8Array,
+): Promise<void> {
+	if (magnet.trackers.length === 0) return;
+	const decoded = decode(rawTorrent);
+	if (
+		typeof decoded !== "object" ||
+		decoded === null ||
+		Array.isArray(decoded) ||
+		decoded instanceof Uint8Array
+	) {
+		return;
+	}
+	const metadata = new TorrentMetadata(
+		decoded as { [key: string]: BencodeValue },
+		rawTorrent,
+	);
+	const target: TrackerAnnounceTarget = {
+		infoHash: magnet.infoHash,
+		totalSize: metadata.totalSize,
+		announceList: magnet.trackers.map((tracker) => [tracker]),
+	};
+	await announce(target, { left: metadata.totalSize }).catch(() => undefined);
 }
 
 async function fetchMetadataFromPeers(
@@ -134,8 +168,17 @@ function fetchMetadataFromPeer(
 
 		conn.on("extensionHandshake", () => {
 			const metadataSize = conn.peerMetadataSize;
-			if (!conn.peerExtensions.has("ut_metadata") || !metadataSize) {
+			if (!conn.peerExtensions.has("ut_metadata")) {
 				finish(new Error("peer does not advertise ut_metadata"));
+				return;
+			}
+			if (
+				!Number.isInteger(metadataSize) ||
+				metadataSize === null ||
+				metadataSize <= 0 ||
+				metadataSize > MAX_METADATA_SIZE
+			) {
+				finish(new Error("peer advertised invalid metadata size"));
 				return;
 			}
 			assembler = new MetadataPieceAssembler(metadataSize, METADATA_BLOCK_SIZE);

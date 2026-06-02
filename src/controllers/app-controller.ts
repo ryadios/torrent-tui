@@ -102,7 +102,7 @@ export class AppController {
 		this.renderer.keyInput.on("keypress", (key) => {
 			this.handleKeyPress(key);
 		});
-		this.renderer.keyInput.on("paste", (event) => {
+		this.renderer.keyInput.on("paste", (event: PasteEvent) => {
 			this.handlePaste(event);
 		});
 

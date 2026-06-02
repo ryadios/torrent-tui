@@ -1,13 +1,12 @@
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join, normalize, sep } from "node:path";
 import {
 	BoxRenderable,
 	type CliRenderer,
-	InputRenderable,
-	InputRenderableEvents,
 	type KeyEvent,
 	type PasteEvent,
+	TextareaRenderable,
 	TextRenderable,
 } from "@opentui/core";
 import { getTheme } from "../theme";
@@ -15,10 +14,11 @@ import type { LayoutDimensions } from "../types/layout";
 import { resolvePath } from "../utils/paths";
 
 const DIALOG_WIDTH = 60;
-const DIALOG_HEIGHT = 17;
+const DIALOG_HEIGHT = 22;
 const INNER_W = DIALOG_WIDTH - 2;
 const MARGIN = 2;
 const MAGNET_LABEL = "Magnet:";
+const MAGNET_INPUT_HEIGHT = 5;
 type DialogFocus = "files" | "magnet";
 
 function truncateName(name: string): string {
@@ -37,10 +37,14 @@ function truncateMiddle(text: string, maxLen: number): string {
 }
 
 function shortenPath(fullPath: string, maxLen: number): string {
-	const home = homedir();
-	const short = fullPath.startsWith(home)
-		? `~${fullPath.slice(home.length)}`
-		: fullPath;
+	const normalizedPath = normalize(fullPath);
+	const normalizedHome = normalize(homedir());
+	const isHome = normalizedPath === normalizedHome;
+	const isInsideHome = normalizedPath.startsWith(`${normalizedHome}${sep}`);
+	const short =
+		isHome || isInsideHome
+			? `~${normalizedPath.slice(normalizedHome.length)}`
+			: normalizedPath;
 	return truncateMiddle(short, maxLen);
 }
 
@@ -60,10 +64,12 @@ export class AddTorrentDialog {
 	private focus: DialogFocus = "files";
 	private itemRows: BoxRenderable[] = [];
 	private itemTextNodes: TextRenderable[] = [];
-	private input: InputRenderable | null = null;
+	private input: TextareaRenderable | null = null;
 	private tabBarText: TextRenderable | null = null;
 	private filesSection: BoxRenderable | null = null;
 	private magnetSection: BoxRenderable | null = null;
+	private titleRow: BoxRenderable | null = null;
+	private tabBarRow: BoxRenderable | null = null;
 	private folderHintRow: BoxRenderable | null = null;
 	private folderPathText: TextRenderable | null = null;
 
@@ -77,6 +83,8 @@ export class AddTorrentDialog {
 		this.renderer = renderer;
 		this.layout = layout;
 		this.torrentFolder = resolvePath(torrentFolder);
+		this.createElements();
+		this.update();
 	}
 
 	open(): void {
@@ -85,25 +93,20 @@ export class AddTorrentDialog {
 		this.selectedIndex = 0;
 		this.focus = "files";
 		this.files = this.scanTorrentFiles();
-		this.build();
+		this.input?.setText("");
+		this.input?.gotoBufferHome();
+		this.refreshFiles();
+		this.update();
+		if (this.container) this.container.visible = true;
+		this.updateFocus();
 	}
 
 	close(): void {
 		if (!this.isOpen) return;
 		this.isOpen = false;
 		this.input?.blur();
-		this.input?.destroy();
 		this.renderer.setCursorPosition(0, 0, false);
-		this.container?.destroy();
-		this.container = null;
-		this.itemRows = [];
-		this.itemTextNodes = [];
-		this.input = null;
-		this.tabBarText = null;
-		this.filesSection = null;
-		this.magnetSection = null;
-		this.folderHintRow = null;
-		this.folderPathText = null;
+		if (this.container) this.container.visible = false;
 	}
 
 	getIsOpen(): boolean {
@@ -161,6 +164,38 @@ export class AddTorrentDialog {
 
 	updateLayout(layout: LayoutDimensions): void {
 		this.layout = layout;
+		if (this.isOpen) this.update();
+	}
+
+	update(): void {
+		const left = Math.max(
+			0,
+			Math.floor((this.layout.terminal.width - DIALOG_WIDTH) / 2),
+		);
+		const top = Math.max(
+			0,
+			Math.floor((this.layout.terminal.height - DIALOG_HEIGHT) / 2),
+		);
+
+		if (this.container) {
+			this.container.left = left;
+			this.container.top = top;
+			this.container.width = DIALOG_WIDTH;
+			this.container.height = DIALOG_HEIGHT;
+		}
+		if (this.titleRow) this.titleRow.width = INNER_W;
+		if (this.tabBarRow) this.tabBarRow.width = INNER_W;
+		if (this.filesSection) this.filesSection.width = INNER_W;
+		if (this.magnetSection) this.magnetSection.width = INNER_W;
+		if (this.input) {
+			this.input.width = INNER_W - MARGIN * 2;
+			this.input.height = MAGNET_INPUT_HEIGHT;
+		}
+		if (this.folderHintRow) this.folderHintRow.width = INNER_W;
+		if (this.folderPathText) {
+			const maxPathLen = INNER_W - MARGIN * 2 - TAB_INDICATOR.length - 2;
+			this.folderPathText.content = shortenPath(this.torrentFolder, maxPathLen);
+		}
 	}
 
 	private updateHighlight(): void {
@@ -202,7 +237,7 @@ export class AddTorrentDialog {
 	}
 
 	private submitMagnet(): void {
-		const value = this.input?.value.trim() ?? "";
+		const value = this.input?.plainText.replace(/[\r\n]/g, "").trim() ?? "";
 		if (value.length === 0) return;
 		this.close();
 		this.onSelect?.(value);
@@ -219,21 +254,13 @@ export class AddTorrentDialog {
 		return `─ ${tabs}`;
 	}
 
-	private build(): void {
+	private createElements(): void {
 		const theme = getTheme();
-		const left = Math.max(
-			0,
-			Math.floor((this.layout.terminal.width - DIALOG_WIDTH) / 2),
-		);
-		const top = Math.max(
-			0,
-			Math.floor((this.layout.terminal.height - DIALOG_HEIGHT) / 2),
-		);
 
 		const container = new BoxRenderable(this.renderer, {
 			position: "absolute",
-			left,
-			top,
+			left: 0,
+			top: 0,
 			width: DIALOG_WIDTH,
 			height: DIALOG_HEIGHT,
 			border: true,
@@ -241,6 +268,7 @@ export class AddTorrentDialog {
 			borderColor: theme.accent,
 			flexDirection: "column",
 			backgroundColor: theme.bgPrimary,
+			visible: false,
 		});
 
 		// Title row
@@ -265,6 +293,7 @@ export class AddTorrentDialog {
 			}),
 		);
 		container.add(titleRow);
+		this.titleRow = titleRow;
 
 		// Tab bar
 		const tabBarRow = new BoxRenderable(this.renderer, {
@@ -272,7 +301,7 @@ export class AddTorrentDialog {
 			height: 1,
 			paddingLeft: MARGIN,
 			paddingRight: MARGIN,
-			marginTop: 1,
+			marginTop: 2,
 		});
 		this.tabBarText = new TextRenderable(this.renderer, {
 			content: this.formatTabs(),
@@ -280,6 +309,7 @@ export class AddTorrentDialog {
 		});
 		tabBarRow.add(this.tabBarText);
 		container.add(tabBarRow);
+		this.tabBarRow = tabBarRow;
 
 		// Files section
 		this.filesSection = new BoxRenderable(this.renderer, {
@@ -287,57 +317,38 @@ export class AddTorrentDialog {
 			flexDirection: "column",
 			marginTop: 1,
 		});
-		this.itemRows = [];
-		this.itemTextNodes = [];
-		if (this.files.length === 0) {
-			this.filesSection.add(
-				new TextRenderable(this.renderer, {
-					content: `${" ".repeat(MARGIN)}No .torrent files in ${this.torrentFolder}`,
-					fg: theme.fgMuted,
-				}),
-			);
-		} else {
-			for (const file of this.files) {
-				const row = new BoxRenderable(this.renderer, {
-					width: INNER_W,
-					height: 1,
-				});
-				const text = new TextRenderable(this.renderer, {
-					content: " ".repeat(MARGIN) + truncateName(file.name),
-					fg: theme.fgSecondary,
-				});
-				row.add(text);
-				this.filesSection.add(row);
-				this.itemRows.push(row);
-				this.itemTextNodes.push(text);
-			}
-		}
 		container.add(this.filesSection);
 
 		// Magnet section
 		this.magnetSection = new BoxRenderable(this.renderer, {
 			width: INNER_W,
-			height: 1,
-			flexDirection: "row",
+			height: MAGNET_INPUT_HEIGHT + 2,
+			flexDirection: "column",
 			paddingLeft: MARGIN,
 			paddingRight: MARGIN,
 			marginTop: 1,
 		});
 		this.magnetSection.add(
 			new TextRenderable(this.renderer, {
-				content: `${MAGNET_LABEL} `,
+				content: MAGNET_LABEL,
 				fg: theme.fgSecondary,
 			}),
 		);
-		this.input = new InputRenderable(this.renderer, {
-			width: INNER_W - MARGIN * 2 - MAGNET_LABEL.length - 1,
+		this.input = new TextareaRenderable(this.renderer, {
+			width: INNER_W - MARGIN * 2,
+			height: MAGNET_INPUT_HEIGHT,
+			wrapMode: "char",
 			placeholder: "paste or type magnet URI",
 			textColor: theme.fgPrimary,
 			backgroundColor: theme.bgTertiary,
 			focusedBackgroundColor: theme.bgTertiary,
 			placeholderColor: theme.fgMuted,
+			keyBindings: [
+				{ name: "return", action: "submit" },
+				{ name: "linefeed", action: "submit" },
+			],
+			onSubmit: () => this.submitMagnet(),
 		});
-		this.input.on(InputRenderableEvents.ENTER, () => this.submitMagnet());
 		this.magnetSection.add(this.input);
 		container.add(this.magnetSection);
 
@@ -371,7 +382,44 @@ export class AddTorrentDialog {
 
 		this.renderer.root.add(container);
 		this.container = container;
-		this.updateFocus();
+		this.refreshFiles();
+	}
+
+	private refreshFiles(): void {
+		const theme = getTheme();
+		for (const row of this.itemRows) row.destroy();
+		this.itemRows = [];
+		this.itemTextNodes = [];
+		if (!this.filesSection) return;
+		if (this.files.length === 0) {
+			const row = new BoxRenderable(this.renderer, {
+				width: INNER_W,
+				height: 1,
+			});
+			row.add(
+				new TextRenderable(this.renderer, {
+					content: `${" ".repeat(MARGIN)}No .torrent files in ${this.torrentFolder}`,
+					fg: theme.fgMuted,
+				}),
+			);
+			this.filesSection.add(row);
+			this.itemRows.push(row);
+			return;
+		}
+		for (const file of this.files) {
+			const row = new BoxRenderable(this.renderer, {
+				width: INNER_W,
+				height: 1,
+			});
+			const text = new TextRenderable(this.renderer, {
+				content: " ".repeat(MARGIN) + truncateName(file.name),
+				fg: theme.fgSecondary,
+			});
+			row.add(text);
+			this.filesSection.add(row);
+			this.itemRows.push(row);
+			this.itemTextNodes.push(text);
+		}
 	}
 
 	private scanTorrentFiles(): Array<{ name: string; path: string }> {

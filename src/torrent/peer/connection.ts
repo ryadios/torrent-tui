@@ -36,6 +36,12 @@ const KEEPALIVE_INTERVAL_MS = 120_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 120_000;
 
+interface AdoptConnectedSocketOptions {
+	peerId: string;
+	reserved: Uint8Array;
+	localMetadata?: Uint8Array | null;
+}
+
 export class PeerConnection extends EventEmitter {
 	readonly address: string;
 	readonly port: number;
@@ -135,6 +141,36 @@ export class PeerConnection extends EventEmitter {
 				this.emit("disconnect");
 			});
 		});
+	}
+
+	adoptConnectedSocket(
+		socket: Socket,
+		remainder: Uint8Array,
+		options: AdoptConnectedSocketOptions,
+	): void {
+		this.socket = socket;
+		this.peerId = options.peerId;
+		this.extensionCapable = supportsExtensionProtocol(options.reserved);
+		this.handshakeDone = true;
+		this.handshakeBuffer = new Uint8Array(0);
+		this.localMetadata = options.localMetadata ?? null;
+		this.startKeepalive();
+		this.resetIdleTimer();
+
+		socket.on("data", (chunk: Buffer) => {
+			this.resetIdleTimer();
+			this.onData(new Uint8Array(chunk));
+		});
+		socket.once("error", (err) => {
+			log("error", `${this.address}:${this.port}  ${err.message}`);
+		});
+		socket.once("close", () => {
+			this.cleanup();
+			this.emit("disconnect");
+		});
+
+		if (this.extensionCapable) this.sendExtensionHandshake();
+		if (remainder.length > 0) this.onData(remainder);
 	}
 
 	private onData(chunk: Uint8Array): void {
