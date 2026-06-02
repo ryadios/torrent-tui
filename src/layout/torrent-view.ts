@@ -9,13 +9,22 @@ const SUFFIX_W = 3;
 const SIZE_W = 9;
 const SEP_W = 2;
 const STATUS_W = 13;
-const DL_W = 12;
-const UL_W = 12;
+const SPEED_W = 22;
 const ETA_W = 9;
-const PCT_W = 5;
+const PEERS_W = 7;
+const SEEDS_W = 7;
+const LEECH_W = 7;
 
 const RIGHT_W =
-	SIZE_W + SEP_W + STATUS_W + DL_W + UL_W + ETA_W + PCT_W + SUFFIX_W;
+	SIZE_W +
+	SEP_W +
+	STATUS_W +
+	SPEED_W +
+	ETA_W +
+	PEERS_W +
+	SEEDS_W +
+	LEECH_W +
+	SUFFIX_W;
 
 function calcWidths(cw: number) {
 	const available = cw - PREFIX_W - RIGHT_W;
@@ -27,21 +36,33 @@ function calcWidths(cw: number) {
 function rightGroup(
 	size: string,
 	status: string,
-	dl: string,
-	ul: string,
+	speed: string,
 	eta: string,
-	pct: string,
+	peers: string,
+	seeds: string,
+	leech: string,
 ): string {
 	return (
 		size.padStart(SIZE_W) +
 		" ".repeat(SEP_W) +
 		status.padEnd(STATUS_W) +
-		dl.padEnd(DL_W) +
-		ul.padEnd(UL_W) +
+		speed.padEnd(SPEED_W) +
 		eta.padEnd(ETA_W) +
-		pct.padStart(PCT_W) +
+		peers.padStart(PEERS_W) +
+		seeds.padStart(SEEDS_W) +
+		leech.padStart(LEECH_W) +
 		" ".repeat(SUFFIX_W)
 	);
+}
+
+function formatCombinedSpeed(dl: number, ul: number): string {
+	const d = dl > 0 ? `↓ ${formatSpeed(dl)}` : "";
+	const u = ul > 0 ? `↑ ${formatSpeed(ul)}` : "";
+	return `${d.padEnd(10)}  ${u}`.slice(0, SPEED_W).padEnd(SPEED_W);
+}
+
+function formatCount(n: number): string {
+	return n > 0 ? String(n) : "-";
 }
 
 function buildRow(
@@ -192,7 +213,7 @@ export class TorrentTable {
 				"Name",
 				nameWidth,
 				gap,
-				rightGroup("Size", "Status", "↓ Speed", "↑ Speed", "ETA", "%"),
+				rightGroup("Size", "Status", "Speed", "ETA", "Peers", "Seeds", "Leech"),
 			),
 		);
 		this.update(this.lastTorrents, this.lastSelectedIndex, this.lastFocusArea);
@@ -234,6 +255,7 @@ export class TorrentTable {
 			width: cw,
 			height: 1,
 			flexDirection: "row",
+			marginBottom: 1,
 		});
 		const filledText = new TextRenderable(this.renderer, {
 			content: "  ",
@@ -263,7 +285,7 @@ export class TorrentTable {
 				? Math.floor((torrent.downloadedPieces / torrent.totalPieces) * 100)
 				: 0;
 		const filledLen = Math.round((pct / 100) * nameWidth);
-		const emptyLen = nameWidth - filledLen;
+		const _emptyLen = nameWidth - filledLen;
 
 		const barColor = (() => {
 			switch (torrent.status) {
@@ -296,10 +318,6 @@ export class TorrentTable {
 		const prefix = isSelected ? "> " : "  ";
 		const name = truncate(torrent.name, nameWidth);
 		const status = formatStatus(torrent.status);
-		const dl =
-			torrent.downloadBps > 0 ? `↓ ${formatSpeed(torrent.downloadBps)}` : "";
-		const ul =
-			torrent.uploadBps > 0 ? `↑ ${formatSpeed(torrent.uploadBps)}` : "";
 
 		setText(
 			row.metaText,
@@ -310,21 +328,31 @@ export class TorrentTable {
 				rightGroup(
 					formatBytes(torrent.totalSize),
 					status,
-					dl,
-					ul,
+					formatCombinedSpeed(torrent.downloadBps, torrent.uploadBps),
 					formatEta(torrent.etaSeconds),
-					`${pct}%`,
+					formatCount(torrent.peers),
+					formatCount(torrent.seeds),
+					formatCount(torrent.leechers),
 				),
 				prefix,
 			),
 		);
 		setFg(row.metaText, isSelected ? theme.accent : theme.fgPrimary);
 
-		setText(row.filledText, `  ${"━".repeat(Math.max(0, filledLen))}`);
+		// Build bar string with % overlaid at center (spaces on both sides for margin)
+		const pctStr = ` ${pct}% `;
+		const barCenter = Math.max(0, Math.floor((nameWidth - pctStr.length) / 2));
+		const barChars = Array.from({ length: nameWidth }, () => "━");
+		for (let i = 0; i < pctStr.length && barCenter + i < nameWidth; i++) {
+			barChars[barCenter + i] = pctStr.charAt(i);
+		}
+		const barStr = barChars.join("");
+
+		setText(row.filledText, `  ${barStr.slice(0, Math.max(0, filledLen))}`);
 		setFg(row.filledText, barColor);
 		setText(
 			row.emptyText,
-			"━".repeat(Math.max(0, emptyLen)) + " ".repeat(trailingW),
+			barStr.slice(Math.max(0, filledLen)) + " ".repeat(trailingW),
 		);
 	}
 
@@ -348,7 +376,7 @@ export class TorrentTable {
 				"Name",
 				nameWidth,
 				gap,
-				rightGroup("Size", "Status", "↓ Speed", "↑ Speed", "ETA", "%"),
+				rightGroup("Size", "Status", "Speed", "ETA", "Peers", "Seeds", "Leech"),
 			),
 			fg: theme.fgPrimary,
 		});
@@ -362,6 +390,6 @@ export class TorrentTable {
 	}
 
 	private maxVisibleRows(): number {
-		return Math.max(0, Math.floor((this.layout.content.height - 2) / 2));
+		return Math.max(0, Math.floor((this.layout.content.height - 2) / 3));
 	}
 }
