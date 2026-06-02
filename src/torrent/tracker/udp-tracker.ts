@@ -170,7 +170,11 @@ export async function announceUDP(
 			const connId = view.getBigUint64(8);
 
 			// Step 2: announce
-			const { buf: annBuf, txId: annTx } = buildAnnounceRequest(connId, metadata, request);
+			const { buf: annBuf, txId: annTx } = buildAnnounceRequest(
+				connId,
+				metadata,
+				request,
+			);
 			const annResp = await sendAndReceive(socket, annBuf, host, port);
 
 			const response = parseUDPAnnounceResponse(annResp, annTx);

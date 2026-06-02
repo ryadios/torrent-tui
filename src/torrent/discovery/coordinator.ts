@@ -46,6 +46,8 @@ export class DiscoveryCoordinator {
 	private dhtRefreshTimer: unknown | null = null;
 	private dhtStarted = false;
 	private stopped = false;
+	private swarmSeeds = 0;
+	private swarmLeechers = 0;
 
 	constructor(
 		private readonly metadata: TorrentMetadata,
@@ -57,7 +59,16 @@ export class DiscoveryCoordinator {
 			numwant: options.numwant,
 			getSnapshot: options.getSnapshot,
 			announceTracker: options.announceTracker,
-			onPeers: (peers) => options.onPeers(peers, "tracker"),
+			onPeers: (peers, response) => {
+				if (response) {
+					this.swarmSeeds = Math.max(this.swarmSeeds, response.complete ?? 0);
+					this.swarmLeechers = Math.max(
+						this.swarmLeechers,
+						response.incomplete ?? 0,
+					);
+				}
+				options.onPeers(peers, "tracker");
+			},
 		});
 		this.dht = metadata.private
 			? null
@@ -92,9 +103,15 @@ export class DiscoveryCoordinator {
 		this.tracker.markCompleted();
 	}
 
+	getSwarmStats(): { seeds: number; leechers: number } {
+		return { seeds: this.swarmSeeds, leechers: this.swarmLeechers };
+	}
+
 	async stop(): Promise<void> {
 		if (this.stopped) return;
 		this.stopped = true;
+		this.swarmSeeds = 0;
+		this.swarmLeechers = 0;
 		this.pex?.stop();
 		if (this.dhtRefreshTimer) {
 			this.scheduler.clearInterval(this.dhtRefreshTimer);

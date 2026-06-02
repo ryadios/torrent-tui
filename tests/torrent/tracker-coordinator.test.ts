@@ -50,7 +50,11 @@ describe("TrackerCoordinator", () => {
 		const seenPeers: string[] = [];
 		const callsByUrl = new Map<string, number>();
 		const coordinator = new TrackerCoordinator(fixture.metadata, {
-			getSnapshot: () => ({ downloaded: 0, uploaded: 0, left: fixture.metadata.totalSize }),
+			getSnapshot: () => ({
+				downloaded: 0,
+				uploaded: 0,
+				left: fixture.metadata.totalSize,
+			}),
 			scheduler,
 			onPeers: (peers) => {
 				for (const peer of peers) {
@@ -247,7 +251,9 @@ class FakeScheduler {
 	}
 
 	clearTimeout(handle: unknown): void {
-		const index = this.timers.indexOf(handle as { delayMs: number; fn: () => void });
+		const index = this.timers.indexOf(
+			handle as { delayMs: number; fn: () => void },
+		);
 		if (index >= 0) this.timers.splice(index, 1);
 	}
 
