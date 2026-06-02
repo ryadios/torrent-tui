@@ -29,8 +29,7 @@ Usage:
                                       Download from the command line
 
 Magnet links:
-  Supported for tracker-backed magnets and magnets with x.pe peers.
-  DHT-only magnets require the planned DHT phase.
+  Supported for BitTorrent v1 btih magnets with trackers, x.pe peers, or DHT peers.
   --verify and --handshake can use a magnet after its metadata is cached.
 
 Options:
@@ -213,7 +212,9 @@ async function runHandshake(torrentPath: string): Promise<void> {
 async function runDownload(torrentPath: string): Promise<void> {
 	const { PeerManager } = await import("./torrent/peer/manager");
 	const { getPeerId, peerIdToString } = await import("./torrent/peer/peer-id");
-	const { TrackerCoordinator } = await import("./torrent/tracker/coordinator");
+	const { DiscoveryCoordinator } = await import(
+		"./torrent/discovery/coordinator"
+	);
 	const {
 		createUploadedAccumulator,
 		recordRemovedPeerUpload,
@@ -231,7 +232,7 @@ async function runDownload(torrentPath: string): Promise<void> {
 	const manager = new PeerManager(metadata);
 	await manager.start();
 	const uploadedAccumulator = createUploadedAccumulator();
-	const trackerCoordinator = new TrackerCoordinator(metadata, {
+	const trackerCoordinator = new DiscoveryCoordinator(metadata, manager, {
 		getSnapshot: () => {
 			const downloaded = session.storage.downloadedBytes;
 			const uploaded = uploadedSnapshot(
@@ -258,7 +259,7 @@ async function runDownload(torrentPath: string): Promise<void> {
 		recordRemovedPeerUpload(uploadedAccumulator, conn);
 		if (manager.connections.size === 0) trackerCoordinator.refreshNow();
 	});
-	trackerCoordinator.start();
+	await trackerCoordinator.start();
 
 	manager.startChoking();
 	const downloader = session.download(manager);

@@ -86,7 +86,7 @@ torrent-tui 'magnet:?xt=urn:btih:...' --download
 | `torrent-tui <file.torrent> --download` | Run the downloader without launching the TUI. |
 | `torrent-tui <magnet-uri> --download` | Fetch magnet metadata, cache it, then run the downloader without launching the TUI. |
 
-Magnet support currently covers BitTorrent v1 `btih` magnets that include trackers (`tr`) or explicit peers (`x.pe`). DHT-only trackerless magnets are planned for the DHT phase. After metadata is cached, `--verify` and `--handshake` can use the same magnet URI.
+Magnet support covers BitTorrent v1 `btih` magnets with trackers (`tr`), explicit peers (`x.pe`), or DHT-discovered peers. After metadata is cached, `--verify` and `--handshake` can use the same magnet URI.
 
 ## Configuration
 
@@ -169,7 +169,8 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 | Peer handshakes and piece download | Available |
 | Resume data | Available |
 | Multi-torrent TUI | Available |
-| Magnet links | Available for tracker-backed v1 magnets |
+| Magnet links | Available for v1 magnets with tracker, explicit-peer, or DHT discovery |
+| Peer discovery | Trackers, DHT, and PEX |
 | Standalone binaries | Not included yet |
 
 ## Development

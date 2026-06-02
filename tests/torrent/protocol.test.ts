@@ -4,12 +4,14 @@ import {
 	decodeExtendedMessage,
 	decodeExtensionHandshake,
 	decodeUtMetadataMessage,
+	decodeUtPexMessage,
 	EXT_HANDSHAKE_ID,
 	encodeExtendedMessage,
 	encodeExtensionHandshake,
 	encodeUtMetadataData,
 	encodeUtMetadataReject,
 	encodeUtMetadataRequest,
+	encodeUtPexMessage,
 	LOCAL_UT_METADATA_ID,
 	supportsExtensionProtocol,
 } from "../../src/torrent/peer/extension.ts";
@@ -22,10 +24,12 @@ import {
 	decode,
 	decodeHave,
 	decodePiece,
+	decodePort,
 	decodeRequest,
 	encode,
 	encodeCancel,
 	encodeHave,
+	encodePort,
 	encodeRequest,
 	MSG,
 	msgName,
@@ -85,6 +89,7 @@ describe("extension protocol messages", () => {
 
 		expect(extended.extensionId).toBe(EXT_HANDSHAKE_ID);
 		expect(handshake.extensions.get("ut_metadata")).toBe(LOCAL_UT_METADATA_ID);
+		expect(handshake.extensions.get("ut_pex")).toBe(2);
 		expect(handshake.metadataSize).toBe(1234);
 	});
 
@@ -112,6 +117,15 @@ describe("extension protocol messages", () => {
 
 		expect(decodeExtendedMessage(wrapped).extensionId).toBe(4);
 	});
+
+	test("encodes and decodes ut_pex compact peer lists", () => {
+		const message = {
+			added: [{ ip: "127.0.0.1", port: 6881 }],
+			dropped: [{ ip: "10.0.0.2", port: 51413 }],
+		};
+
+		expect(decodeUtPexMessage(encodeUtPexMessage(message))).toEqual(message);
+	});
 });
 
 describe("peer protocol messages", () => {
@@ -128,6 +142,13 @@ describe("peer protocol messages", () => {
 			payload: undefined,
 		});
 		expect(msgName(MSG.INTERESTED)).toBe("INTERESTED");
+	});
+
+	test("encodes and decodes DHT PORT messages", () => {
+		const port = decode(encodePort(6881));
+
+		expect(port.type).toBe(MSG.PORT);
+		expect(decodePort(port.payload ?? new Uint8Array())).toBe(6881);
 	});
 
 	test("encodes and decodes have, request, cancel, and piece payloads", () => {

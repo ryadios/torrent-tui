@@ -19,6 +19,7 @@ export class PeerManager extends EventEmitter {
 	private optimisticTimer: ReturnType<typeof setInterval> | null = null;
 	private optimisticKey: string | null = null;
 	private unchokedKeys = new Set<string>();
+	private bannedPeers = new Set<string>();
 
 	constructor(metadata: TorrentMetadata, maxConnections = 50) {
 		super();
@@ -48,6 +49,7 @@ export class PeerManager extends EventEmitter {
 
 	private async connectOne(ip: string, port: number): Promise<void> {
 		const key = `${ip}:${port}`;
+		if (this.bannedPeers.has(key)) return;
 		if (this.connections.has(key)) return;
 
 		const conn = new PeerConnection(ip, port, this.infoHash, {
@@ -62,6 +64,9 @@ export class PeerManager extends EventEmitter {
 		conn.on("disconnect", () => {
 			this.connections.delete(key);
 			this.emit("peerRemoved", conn);
+		});
+		conn.on("dhtPort", (dhtPort: number) => {
+			this.emit("dhtPort", { ip: conn.address, port: dhtPort });
 		});
 
 		try {
@@ -99,6 +104,10 @@ export class PeerManager extends EventEmitter {
 				const ip = socket.remoteAddress ?? "unknown";
 				const port = socket.remotePort ?? 0;
 				const key = `${ip}:${port}`;
+				if (this.bannedPeers.has(key) || this.connections.has(key)) {
+					socket.destroy();
+					return;
+				}
 				log(
 					"peer",
 					`${key.padEnd(50)}  ok   ${result.peerId.slice(0, 8)}  (inbound)`,
@@ -114,6 +123,9 @@ export class PeerManager extends EventEmitter {
 				conn.on("disconnect", () => {
 					this.connections.delete(key);
 					this.emit("peerRemoved", conn);
+				});
+				conn.on("dhtPort", (dhtPort: number) => {
+					this.emit("dhtPort", { ip: conn.address, port: dhtPort });
 				});
 				this.connections.set(key, conn);
 				conn.adoptConnectedSocket(socket, remainder, {
@@ -234,10 +246,30 @@ export class PeerManager extends EventEmitter {
 		const seen = new Set<string>();
 		return peers.filter((p) => {
 			const k = `${p.ip}:${p.port}`;
+			if (this.bannedPeers.has(k) || this.connections.has(k)) return false;
 			if (seen.has(k)) return false;
 			seen.add(k);
 			return true;
 		});
+	}
+
+	ban(peer: PeerInfo): void {
+		const key = `${peer.ip}:${peer.port}`;
+		this.bannedPeers.add(key);
+		this.connections.get(key)?.destroy();
+	}
+
+	hasPeer(peer: PeerInfo): boolean {
+		const key = `${peer.ip}:${peer.port}`;
+		return this.connections.has(key) || this.bannedPeers.has(key);
+	}
+
+	availableSlots(): number {
+		return Math.max(0, this.maxConnections - this.connections.size);
+	}
+
+	listenPort(): number {
+		return this.listener.port;
 	}
 
 	close(): void {

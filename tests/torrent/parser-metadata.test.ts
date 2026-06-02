@@ -134,6 +134,16 @@ describe("TorrentMetadata", () => {
 		]);
 	});
 
+	test("parses private flag and DHT bootstrap nodes", () => {
+		const { metadata } = singleFileTorrentFixture({
+			private: true,
+			nodes: [["127.0.0.1", 6881]],
+		});
+
+		expect(metadata.private).toBe(true);
+		expect(metadata.nodes).toEqual([{ ip: "127.0.0.1", port: 6881 }]);
+	});
+
 	test("throws on invalid metadata", () => {
 		const fixture = singleFileTorrentFixture();
 		const decoded = decode(fixture.raw) as { [key: string]: BencodeValue };

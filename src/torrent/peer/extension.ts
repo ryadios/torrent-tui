@@ -4,6 +4,7 @@ import { decode, encode } from "../parser.ts";
 export const EXTENDED_MESSAGE_ID = 20;
 export const EXT_HANDSHAKE_ID = 0;
 export const LOCAL_UT_METADATA_ID = 1;
+export const LOCAL_UT_PEX_ID = 2;
 export const EXTENSION_PROTOCOL_RESERVED_BYTE = 5;
 export const EXTENSION_PROTOCOL_RESERVED_MASK = 0x10;
 export const METADATA_BLOCK_SIZE = 16 * 1024;
@@ -19,6 +20,11 @@ export type UtMetadataMessage =
 	| { msgType: 0; piece: number }
 	| { msgType: 1; piece: number; totalSize: number; data: Uint8Array }
 	| { msgType: 2; piece: number };
+
+export interface UtPexMessage {
+	added: Array<{ ip: string; port: number }>;
+	dropped: Array<{ ip: string; port: number }>;
+}
 
 export function supportsExtensionProtocol(reserved: Uint8Array): boolean {
 	return (
@@ -50,13 +56,22 @@ export function decodeExtendedMessage(payload: Uint8Array): {
 }
 
 export function encodeExtensionHandshake(
-	options: { metadataSize?: number; utMetadataId?: number } = {},
+	options: {
+		metadataSize?: number;
+		utMetadataId?: number;
+		utPexId?: number;
+		pex?: boolean;
+	} = {},
 ): Uint8Array {
 	const body: { [key: string]: BencodeValue } = {
 		m: {
 			ut_metadata: options.utMetadataId ?? LOCAL_UT_METADATA_ID,
 		},
 	};
+	if (options.pex ?? true) {
+		(body.m as { [key: string]: BencodeValue }).ut_pex =
+			options.utPexId ?? LOCAL_UT_PEX_ID;
+	}
 	if (options.metadataSize !== undefined)
 		body.metadata_size = options.metadataSize;
 	return encodeExtendedMessage(EXT_HANDSHAKE_ID, encode(body));
@@ -145,6 +160,68 @@ export function decodeUtMetadataMessage(
 		};
 	}
 	throw new Error(`Unsupported ut_metadata msg_type: ${msgType}`);
+}
+
+export function encodeUtPexMessage(message: UtPexMessage): Uint8Array {
+	return encode({
+		added: encodeCompactPeers(message.added),
+		dropped: encodeCompactPeers(message.dropped),
+	});
+}
+
+export function decodeUtPexMessage(payload: Uint8Array): UtPexMessage {
+	const decoded = decode(payload);
+	if (
+		typeof decoded !== "object" ||
+		decoded === null ||
+		Array.isArray(decoded) ||
+		decoded instanceof Uint8Array
+	) {
+		throw new Error("Invalid ut_pex message");
+	}
+	return {
+		added:
+			decoded.added instanceof Uint8Array
+				? decodeCompactPeers(decoded.added)
+				: [],
+		dropped:
+			decoded.dropped instanceof Uint8Array
+				? decodeCompactPeers(decoded.dropped)
+				: [],
+	};
+}
+
+function encodeCompactPeers(
+	peers: Array<{ ip: string; port: number }>,
+): Uint8Array {
+	const bytes = new Uint8Array(peers.length * 6);
+	let offset = 0;
+	for (const peer of peers) {
+		const octets = peer.ip.split(".").map((part) => Number(part));
+		if (
+			octets.length !== 4 ||
+			octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+		) {
+			throw new Error(`Cannot encode non-IPv4 PEX peer: ${peer.ip}`);
+		}
+		bytes.set(octets, offset);
+		bytes[offset + 4] = (peer.port >>> 8) & 0xff;
+		bytes[offset + 5] = peer.port & 0xff;
+		offset += 6;
+	}
+	return bytes;
+}
+
+function decodeCompactPeers(
+	data: Uint8Array,
+): Array<{ ip: string; port: number }> {
+	const peers: Array<{ ip: string; port: number }> = [];
+	for (let offset = 0; offset + 6 <= data.length; offset += 6) {
+		const ip = `${data[offset] ?? 0}.${data[offset + 1] ?? 0}.${data[offset + 2] ?? 0}.${data[offset + 3] ?? 0}`;
+		const port = ((data[offset + 4] ?? 0) << 8) | (data[offset + 5] ?? 0);
+		if (port > 0) peers.push({ ip, port });
+	}
+	return peers;
 }
 
 function findBencodeEnd(data: Uint8Array, index: number): number {

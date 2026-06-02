@@ -30,6 +30,8 @@ export function singleFileTorrentFixture(
 		pieceLength?: number;
 		announce?: string;
 		announceList?: string[][];
+		nodes?: Array<[string, number]>;
+		private?: boolean;
 	} = {},
 ): TorrentFixture {
 	const name = options.name ?? "sample.bin";
@@ -81,6 +83,8 @@ function buildTorrentDictionary(
 	options: {
 		announce?: string;
 		announceList?: string[][];
+		nodes?: Array<[string, number]>;
+		private?: boolean;
 	},
 ): { [key: string]: BencodeValue } {
 	const torrent: { [key: string]: BencodeValue } = {
@@ -89,6 +93,12 @@ function buildTorrentDictionary(
 	};
 	if (options.announceList) {
 		torrent["announce-list"] = options.announceList;
+	}
+	if (options.nodes) {
+		torrent.nodes = options.nodes;
+	}
+	if (options.private) {
+		info.private = 1;
 	}
 	return torrent;
 }
