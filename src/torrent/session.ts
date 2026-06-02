@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { Downloader } from "./downloader.ts";
+import { Downloader, type DownloaderOptions } from "./downloader.ts";
 import type { TorrentMetadata } from "./metadata.ts";
 import type { PeerManager } from "./peer/manager.ts";
 import { loadTrustedResumeData } from "./resume.ts";
@@ -72,13 +72,14 @@ export class TorrentSession extends EventEmitter {
 		this.transition("ready");
 	}
 
-	download(manager: PeerManager): Downloader {
+	download(manager: PeerManager, options?: DownloaderOptions): Downloader {
 		this.transition("downloading");
 		const downloader = new Downloader(
 			this.metadata,
 			this.storage,
 			manager,
 			this.downloadPath,
+			options,
 		);
 
 		downloader.on("piece:verified", (i: number) =>

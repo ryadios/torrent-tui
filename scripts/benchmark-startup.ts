@@ -77,6 +77,8 @@ async function runRound(args: Args): Promise<Record<string, number>> {
 			downloadPath: paths.downloads,
 			maxConnections: 50,
 			torrentFolder: paths.torrents,
+			downloadRateLimitBps: 0,
+			uploadRateLimitBps: 0,
 		});
 
 		let firstRowMs: number | null = null;

@@ -20,11 +20,13 @@ export interface TorrentResumeData {
 	downloadedPieces?: number[];
 	files: ResumeFileFingerprint[];
 	savedAt: number;
+	selectedFileIndices?: number[] | null;
 }
 
 export interface TrustedResumeData {
 	data: TorrentResumeData;
 	verifiedPieces: number[];
+	selectedFileIndices: number[] | null;
 }
 
 export function resumePathForInfoHash(infoHash: string): string {
@@ -60,6 +62,10 @@ export function loadTrustedResumeData(
 			data.verifiedPieces ?? data.downloadedPieces ?? [],
 			metadata.pieceCount,
 		),
+		selectedFileIndices: normalizeSelectedFileIndices(
+			data.selectedFileIndices,
+			metadata.files.length,
+		),
 	};
 }
 
@@ -67,6 +73,7 @@ export function writeResumeData(
 	metadata: TorrentMetadata,
 	downloadPath: string,
 	verifiedPieces: Iterable<number>,
+	selectedFileIndices?: number[] | null,
 ): void {
 	const infoHash = infoHashHex(metadata);
 	const files = buildFileFingerprints(metadata, downloadPath);
@@ -84,6 +91,7 @@ export function writeResumeData(
 		downloadedPieces: pieces,
 		files,
 		savedAt: Math.floor(Date.now() / 1000),
+		selectedFileIndices: selectedFileIndices ?? null,
 	});
 }
 
@@ -144,4 +152,16 @@ function normalizeVerifiedPieces(
 		}
 	}
 	return [...unique].sort((a, b) => a - b);
+}
+
+export function normalizeSelectedFileIndices(
+	stored: number[] | null | undefined,
+	fileCount: number,
+): number[] | null {
+	if (!stored || !Array.isArray(stored)) return null;
+	const valid = stored.filter(
+		(i) => Number.isInteger(i) && i >= 0 && i < fileCount,
+	);
+	if (valid.length === fileCount) return null; // all selected = null
+	return [...new Set(valid)].sort((a, b) => a - b);
 }
