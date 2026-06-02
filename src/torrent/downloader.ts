@@ -292,6 +292,7 @@ export class Downloader extends EventEmitter {
 
 			if (strikes >= CORRUPT_STRIKE_LIMIT) {
 				this.bannedPeers.add(key);
+				this.manager.ban({ ip: conn.address, port: conn.port });
 				conn.suppressDisconnect = true;
 				conn.destroy();
 			}
@@ -407,7 +408,11 @@ export class Downloader extends EventEmitter {
 				const begin = Number(reqKey.slice(prefix.length));
 				const blockIdx = Math.floor(begin / BLOCK_SIZE);
 				if (sendCancel && peer) {
-					peer.sendCancel(pieceIndex, begin, this.blockLength(pieceIndex, blockIdx));
+					peer.sendCancel(
+						pieceIndex,
+						begin,
+						this.blockLength(pieceIndex, blockIdx),
+					);
 				}
 			}
 		}

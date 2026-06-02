@@ -4,6 +4,7 @@ import type { AppSettings } from "../config/settings";
 import type { Store, TorrentPeerState, TorrentState } from "../store";
 import { writeJsonAtomic } from "../utils/json";
 import { getDataDir, resolvePath } from "../utils/paths";
+import { DiscoveryCoordinator } from "./discovery/coordinator";
 import type { Downloader } from "./downloader";
 import { parseMagnetUri } from "./magnet";
 import {
@@ -22,7 +23,6 @@ import {
 } from "./resume";
 import { TorrentSession } from "./session";
 import { StorageManager, VerificationCancelledError } from "./storage";
-import { TrackerCoordinator } from "./tracker/coordinator";
 import type { FileInfo, TorrentStatus } from "./types";
 import {
 	createUploadedAccumulator,
@@ -36,7 +36,7 @@ interface TorrentEntry {
 	magnetUri?: string;
 	session: TorrentSession | null;
 	manager: PeerManager | null;
-	trackerCoordinator: TrackerCoordinator | null;
+	trackerCoordinator: DiscoveryCoordinator | null;
 	downloader: Downloader | null;
 	hasTransferActivity: boolean;
 	uploadedAccumulator: UploadedAccumulator;
@@ -686,7 +686,7 @@ export class TorrentBridge {
 
 		const manager = new PeerManager(metadata, this.config.maxConnections);
 		entry.manager = manager;
-		const trackerCoordinator = new TrackerCoordinator(metadata, {
+		const trackerCoordinator = new DiscoveryCoordinator(metadata, manager, {
 			getSnapshot: () => {
 				const current = this.torrents.get(id);
 				const storage = current?.session?.storage ?? session.storage;
@@ -717,7 +717,7 @@ export class TorrentBridge {
 
 		try {
 			await manager.start();
-			trackerCoordinator.start();
+			await trackerCoordinator.start();
 			if (!this.torrents.has(id)) {
 				await trackerCoordinator.stop();
 				manager.close();

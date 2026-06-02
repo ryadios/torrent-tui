@@ -7,15 +7,19 @@ import {
 	decodeExtendedMessage,
 	decodeExtensionHandshake,
 	decodeUtMetadataMessage,
+	decodeUtPexMessage,
 	EXT_HANDSHAKE_ID,
 	encodeExtendedMessage,
 	encodeExtensionHandshake,
 	encodeUtMetadataData,
 	encodeUtMetadataReject,
 	encodeUtMetadataRequest,
+	encodeUtPexMessage,
 	LOCAL_UT_METADATA_ID,
+	LOCAL_UT_PEX_ID,
 	METADATA_BLOCK_SIZE,
 	supportsExtensionProtocol,
+	type UtPexMessage,
 } from "./extension.ts";
 import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { MessageBuffer } from "./message-buffer.ts";
@@ -24,10 +28,12 @@ import {
 	decodeHave,
 	decode as decodeMsg,
 	decodePiece,
+	decodePort,
 	decodeRequest,
 	encodeCancel,
 	encodeHave,
 	encode as encodeMsg,
+	encodePort,
 	encodeRequest,
 	MSG,
 } from "./protocol.ts";
@@ -253,6 +259,9 @@ export class PeerConnection extends EventEmitter {
 						this.emit("request", req.index, req.begin, req.length);
 					}
 					break;
+				case MSG.PORT:
+					if (msg.payload) this.emit("dhtPort", decodePort(msg.payload));
+					break;
 				case MSG.EXTENDED:
 					if (msg.payload) this.onExtendedMessage(msg.payload);
 					break;
@@ -279,6 +288,10 @@ export class PeerConnection extends EventEmitter {
 				} else {
 					this.emit("utMetadata", msg);
 				}
+				return;
+			}
+			if (extended.extensionId === LOCAL_UT_PEX_ID) {
+				this.emit("utPex", decodeUtPexMessage(extended.payload));
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -370,6 +383,21 @@ export class PeerConnection extends EventEmitter {
 				payload: encodeExtensionHandshake({
 					metadataSize: this.localMetadata?.length,
 				}),
+			}),
+		);
+	}
+
+	sendDhtPort(port: number): void {
+		this.write(encodePort(port));
+	}
+
+	sendUtPex(message: UtPexMessage): void {
+		const id = this.peerExtensions.get("ut_pex");
+		if (!id) return;
+		this.write(
+			encodeMsg({
+				type: MSG.EXTENDED,
+				payload: encodeExtendedMessage(id, encodeUtPexMessage(message)),
 			}),
 		);
 	}

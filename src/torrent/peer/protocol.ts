@@ -9,6 +9,7 @@ export const MSG = {
 	REQUEST: 6,
 	PIECE: 7,
 	CANCEL: 8,
+	PORT: 9,
 	EXTENDED: 20,
 } as const;
 
@@ -101,6 +102,17 @@ export function decodeRequest(payload: Uint8Array): {
 		begin: view.getUint32(4),
 		length: view.getUint32(8),
 	};
+}
+
+export function encodePort(port: number): Uint8Array {
+	const payload = new Uint8Array(2);
+	const view = new DataView(payload.buffer);
+	view.setUint16(0, port);
+	return encode({ type: MSG.PORT, payload });
+}
+
+export function decodePort(payload: Uint8Array): number {
+	return new DataView(payload.buffer, payload.byteOffset).getUint16(0);
 }
 
 export function decodePiece(payload: Uint8Array): {
