@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { DhtClient } from "./dht/node.ts";
 import { type MagnetInfo, parseMagnetUri } from "./magnet.ts";
 import { TorrentMetadata } from "./metadata.ts";
 import {
@@ -28,6 +29,7 @@ export interface MagnetResolveProgress {
 
 export interface ResolveMagnetOptions {
 	onProgress?: (progress: MagnetResolveProgress) => void;
+	dht?: DhtClient | null;
 }
 
 export interface ResolveMagnetResult {
@@ -49,15 +51,13 @@ export async function resolveMagnetToTorrent(
 		};
 	}
 
-	const peers = await discoverMagnetPeers(magnet);
+	const peers = await discoverMagnetPeers(magnet, options.dht);
 	options.onProgress?.({
 		status: peers.length > 0 ? "metadata" : "stalled",
 		peers: peers.length,
 	});
 	if (peers.length === 0) {
-		throw new Error(
-			"No peers found for magnet metadata; DHT support is planned for phase 13",
-		);
+		throw new Error("No peers found for magnet metadata");
 	}
 
 	const infoBytes = await fetchMetadataFromPeers(magnet, peers, options);
@@ -71,7 +71,10 @@ export async function resolveMagnetToTorrent(
 	return { magnet, torrentPath, fromCache: false };
 }
 
-async function discoverMagnetPeers(magnet: MagnetInfo): Promise<PeerInfo[]> {
+async function discoverMagnetPeers(
+	magnet: MagnetInfo,
+	dhtOverride?: DhtClient | null,
+): Promise<PeerInfo[]> {
 	const target: TrackerAnnounceTarget = {
 		infoHash: magnet.infoHash,
 		totalSize: 0,
@@ -85,15 +88,34 @@ async function discoverMagnetPeers(magnet: MagnetInfo): Promise<PeerInfo[]> {
 					}))
 				).peers
 			: [];
+	const ownsDht = dhtOverride === undefined;
+	const dht = ownsDht ? new DhtClient() : dhtOverride;
+	const dhtPeers =
+		dht && (magnet.trackers.length === 0 || trackerPeers.length === 0)
+			? await discoverMagnetPeersFromDht(dht, magnet.infoHash)
+			: [];
+	if (ownsDht) dht?.close();
 	const seen = new Set<string>();
 	const peers: PeerInfo[] = [];
-	for (const peer of [...magnet.peers, ...trackerPeers]) {
+	for (const peer of [...magnet.peers, ...trackerPeers, ...dhtPeers]) {
 		const key = `${peer.ip}:${peer.port}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
 		peers.push(peer);
 	}
 	return peers;
+}
+
+async function discoverMagnetPeersFromDht(
+	dht: DhtClient,
+	infoHash: Uint8Array,
+): Promise<PeerInfo[]> {
+	try {
+		await dht.start();
+		return await dht.getPeers(infoHash);
+	} catch {
+		return [];
+	}
 }
 
 async function announceResolvedMagnet(

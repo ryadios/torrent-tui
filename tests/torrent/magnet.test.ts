@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { DhtClient } from "../../src/torrent/dht/node.ts";
 import { parseMagnetUri } from "../../src/torrent/magnet.ts";
+import { resolveMagnetToTorrent } from "../../src/torrent/magnet-resolver.ts";
 import {
 	buildTorrentFileFromInfo,
 	MetadataPieceAssembler,
@@ -7,6 +9,7 @@ import {
 } from "../../src/torrent/metadata-cache.ts";
 import { extractInfoBytes } from "../../src/torrent/parser.ts";
 import { METADATA_BLOCK_SIZE } from "../../src/torrent/peer/extension.ts";
+import type { PeerInfo } from "../../src/torrent/types.ts";
 import { hex } from "../helpers/bytes.ts";
 import { singleFileTorrentFixture } from "../helpers/torrent-fixtures.ts";
 
@@ -75,4 +78,34 @@ describe("magnet metadata cache helpers", () => {
 		expect(assembler.complete).toBe(true);
 		expect(assembler.assemble()).toEqual(data);
 	});
+
+	test("uses DHT for trackerless magnet peer discovery", async () => {
+		const dht = new FakeMagnetDht([{ ip: "127.0.0.1", port: 1 }]);
+
+		await expect(
+			resolveMagnetToTorrent(
+				"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+				{ dht: dht as unknown as DhtClient },
+			),
+		).rejects.toThrow("Failed to fetch magnet metadata");
+
+		expect(dht.started).toBe(true);
+		expect(dht.lookups).toBe(1);
+	});
 });
+
+class FakeMagnetDht {
+	started = false;
+	lookups = 0;
+
+	constructor(private readonly peers: PeerInfo[]) {}
+
+	async start(): Promise<void> {
+		this.started = true;
+	}
+
+	async getPeers(): Promise<PeerInfo[]> {
+		this.lookups++;
+		return this.peers;
+	}
+}

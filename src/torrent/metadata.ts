@@ -20,6 +20,8 @@ export class TorrentMetadata {
 	readonly infoHash: Uint8Array;
 	readonly infoBytes: Uint8Array;
 	readonly announceList: string[][];
+	readonly private: boolean;
+	readonly nodes: Array<{ ip: string; port: number }>;
 
 	constructor(
 		decoded: { [key: string]: BencodeValue },
@@ -35,6 +37,7 @@ export class TorrentMetadata {
 			throw new Error("Missing or invalid info dict");
 		}
 		const infoDict = info as { [key: string]: BencodeValue };
+		this.private = infoDict.private === 1;
 
 		// name
 		const nameRaw = infoDict.name;
@@ -135,6 +138,8 @@ export class TorrentMetadata {
 						: null;
 			this.announceList = announceStr ? [[announceStr]] : [];
 		}
+
+		this.nodes = parseDhtNodes(decoded.nodes);
 	}
 
 	formatSize(): string {
@@ -202,4 +207,25 @@ export class TorrentMetadata {
 			`${this.name}   ${this.formatSize()}   ${this.pieceCount} × ${this.formatPieceLength()}   ${trackerParts || "no trackers"}`,
 		);
 	}
+}
+
+function parseDhtNodes(
+	value: BencodeValue | undefined,
+): Array<{ ip: string; port: number }> {
+	if (!Array.isArray(value)) return [];
+	const nodes: Array<{ ip: string; port: number }> = [];
+	for (const entry of value) {
+		if (!Array.isArray(entry) || entry.length < 2) continue;
+		const hostRaw = entry[0];
+		const port = entry[1];
+		const ip =
+			hostRaw instanceof Uint8Array
+				? TEXT_DECODER.decode(hostRaw)
+				: typeof hostRaw === "string"
+					? hostRaw
+					: null;
+		if (!ip || typeof port !== "number" || port <= 0 || port > 65535) continue;
+		nodes.push({ ip, port });
+	}
+	return nodes;
 }
