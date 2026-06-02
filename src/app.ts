@@ -15,6 +15,7 @@ import { Store } from "./store";
 import { TorrentBridge } from "./torrent/bridge";
 import { isMagnetUri } from "./torrent/magnet";
 import type { LayoutDimensions } from "./types/layout";
+import { env } from "./utils/env";
 import { calculateLayout } from "./utils/layout";
 
 const INITIAL_STATE = {
@@ -42,7 +43,11 @@ export class App {
 	async start(initialTorrentPath?: string): Promise<void> {
 		const config = loadConfig();
 
-		this.renderer = await createCliRenderer({ exitOnCtrlC: true });
+		this.renderer = await createCliRenderer({
+			exitOnCtrlC: true,
+			openConsoleOnError: env.SHOW_CONSOLE,
+			useConsole: env.SHOW_CONSOLE,
+		});
 		this.store = new Store(INITIAL_STATE);
 		this.layout = calculateLayout(this.renderer.width, this.renderer.height);
 		this.bridge = new TorrentBridge(this.store, config);
