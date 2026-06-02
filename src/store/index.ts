@@ -1,5 +1,6 @@
 export type TorrentUiStatus =
 	| "queued"
+	| "metadata"
 	| "checking"
 	| "connecting"
 	| "downloading"

@@ -5,11 +5,13 @@ const HANDSHAKE_LEN = 68;
 export function buildHandshake(
 	infoHash: Uint8Array,
 	peerId: Uint8Array,
+	reservedBytes?: Uint8Array,
 ): Uint8Array {
 	const buf = new Uint8Array(HANDSHAKE_LEN);
 	buf[0] = 19; // pstrlen
 	buf.set(PROTOCOL_BYTES, 1); // pstr (19 bytes)
 	// bytes 20–27: reserved (zeros, already set)
+	if (reservedBytes) buf.set(reservedBytes.slice(0, 8), 20);
 	buf.set(infoHash, 28); // info_hash
 	buf.set(peerId, 48); // peer_id
 	return buf;

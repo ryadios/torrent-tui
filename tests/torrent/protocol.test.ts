@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+	buildExtensionReservedBytes,
+	decodeExtendedMessage,
+	decodeExtensionHandshake,
+	decodeUtMetadataMessage,
+	EXT_HANDSHAKE_ID,
+	encodeExtendedMessage,
+	encodeExtensionHandshake,
+	encodeUtMetadataData,
+	encodeUtMetadataReject,
+	encodeUtMetadataRequest,
+	LOCAL_UT_METADATA_ID,
+	supportsExtensionProtocol,
+} from "../../src/torrent/peer/extension.ts";
+import {
 	buildHandshake,
 	parseHandshake,
 } from "../../src/torrent/peer/handshake.ts";
@@ -33,6 +47,15 @@ describe("peer handshake", () => {
 		});
 	});
 
+	test("advertises BEP 10 extension support in reserved bytes", () => {
+		const infoHash = new Uint8Array(20).fill(1);
+		const peerId = bytes("-TT0001-123456789012");
+		const raw = buildHandshake(infoHash, peerId, buildExtensionReservedBytes());
+		const parsed = parseHandshake(raw, infoHash);
+
+		expect(supportsExtensionProtocol(parsed.reserved)).toBe(true);
+	});
+
 	test("rejects invalid handshakes", () => {
 		const infoHash = new Uint8Array(20).fill(1);
 		const peerId = bytes("-TT0001-123456789012");
@@ -51,6 +74,43 @@ describe("peer handshake", () => {
 		expect(() => parseHandshake(badHash, infoHash)).toThrow(
 			"info_hash mismatch",
 		);
+	});
+});
+
+describe("extension protocol messages", () => {
+	test("encodes and decodes extension handshake", () => {
+		const payload = encodeExtensionHandshake({ metadataSize: 1234 });
+		const extended = decodeExtendedMessage(payload);
+		const handshake = decodeExtensionHandshake(extended.payload);
+
+		expect(extended.extensionId).toBe(EXT_HANDSHAKE_ID);
+		expect(handshake.extensions.get("ut_metadata")).toBe(LOCAL_UT_METADATA_ID);
+		expect(handshake.metadataSize).toBe(1234);
+	});
+
+	test("encodes and decodes ut_metadata request, data, and reject", () => {
+		expect(decodeUtMetadataMessage(encodeUtMetadataRequest(2))).toEqual({
+			msgType: 0,
+			piece: 2,
+		});
+		expect(
+			decodeUtMetadataMessage(encodeUtMetadataData(1, 10, bytes("abc"))),
+		).toEqual({
+			msgType: 1,
+			piece: 1,
+			totalSize: 10,
+			data: bytes("abc"),
+		});
+		expect(decodeUtMetadataMessage(encodeUtMetadataReject(3))).toEqual({
+			msgType: 2,
+			piece: 3,
+		});
+	});
+
+	test("wraps extension payloads with peer-specific IDs", () => {
+		const wrapped = encodeExtendedMessage(4, encodeUtMetadataRequest(0));
+
+		expect(decodeExtendedMessage(wrapped).extensionId).toBe(4);
 	});
 });
 
