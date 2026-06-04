@@ -35,6 +35,7 @@ export class ContentWindow {
 		selectedIndex: number,
 		detailTab: DetailTab = "Pieces",
 		detailScrollOffset = 0,
+		filesTabCursor = -1,
 	): void {
 		const theme = getTheme();
 		const state = this.store.getState();
@@ -56,6 +57,7 @@ export class ContentWindow {
 			focusArea === "details",
 			detailScrollOffset,
 			detailPlaceholder,
+			filesTabCursor,
 		);
 	}
 

@@ -22,7 +22,6 @@ export interface ToastConfig {
 export class Toast {
 	private renderer: CliRenderer;
 	private config: ToastConfig;
-	private layout: LayoutDimensions;
 	private x: number;
 	private y: number;
 	private height: number;
@@ -37,7 +36,6 @@ export class Toast {
 	constructor(
 		renderer: CliRenderer,
 		config: ToastConfig,
-		layout: LayoutDimensions,
 		x: number,
 		y: number,
 	) {
@@ -47,7 +45,6 @@ export class Toast {
 			duration: TOAST_DEFAULT_DURATION,
 			...config,
 		};
-		this.layout = layout;
 		this.x = x;
 		this.y = y;
 		this.createdAt = Date.now();
@@ -130,7 +127,6 @@ export class Toast {
 	}
 
 	private createTitleLabel(): TextRenderable {
-		const _theme = getTheme();
 		const icon = this.getIcon();
 		return new TextRenderable(this.renderer, {
 			content: `${icon} ${this.config.title}`,
@@ -241,8 +237,6 @@ export class Toast {
 	}
 
 	updateLayout(layout: LayoutDimensions): void {
-		this.layout = layout;
-
 		const newX = layout.terminal.width - TOAST_WIDTH - TOAST_MARGIN;
 		if (newX !== this.x) {
 			this.x = newX;

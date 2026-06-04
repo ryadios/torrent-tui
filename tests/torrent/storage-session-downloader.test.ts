@@ -242,6 +242,8 @@ describe("TorrentBridge restore", () => {
 					downloadPath: dir,
 					maxConnections: 50,
 					torrentFolder: dir,
+					downloadRateLimitBps: 0,
+					uploadRateLimitBps: 0,
 				});
 
 				await bridge.restoreSession();
@@ -275,6 +277,8 @@ describe("TorrentBridge restore", () => {
 					downloadPath: dir,
 					maxConnections: 50,
 					torrentFolder: dir,
+					downloadRateLimitBps: 0,
+					uploadRateLimitBps: 0,
 				});
 
 				await bridge.restoreSession();
@@ -320,6 +324,8 @@ describe("TorrentBridge restore", () => {
 					downloadPath: dir,
 					maxConnections: 50,
 					torrentFolder: dir,
+					downloadRateLimitBps: 0,
+					uploadRateLimitBps: 0,
 				});
 
 				await bridge.restoreSession();

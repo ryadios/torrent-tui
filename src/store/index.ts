@@ -14,6 +14,8 @@ export type TorrentUiStatus =
 export interface TorrentFileState {
 	path: string;
 	length: number;
+	downloadedBytes: number;
+	selected: boolean;
 }
 
 export interface TorrentPeerState {
@@ -37,6 +39,8 @@ export interface TorrentState {
 	downloadBps: number;
 	uploadBps: number;
 	peers: number;
+	seeds: number;
+	leechers: number;
 	peerDetails: TorrentPeerState[];
 	files: TorrentFileState[];
 	etaSeconds: number | null;

@@ -10,7 +10,10 @@ describe("uploaded tracker accounting", () => {
 		const accumulator = createUploadedAccumulator();
 
 		expect(
-			uploadedSnapshot(accumulator, [{ uploadedTotal: 10 }, { uploadedTotal: 5 }]),
+			uploadedSnapshot(accumulator, [
+				{ uploadedTotal: 10 },
+				{ uploadedTotal: 5 },
+			]),
 		).toBe(15);
 	});
 

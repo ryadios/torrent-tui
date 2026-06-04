@@ -8,6 +8,7 @@ import { AppController } from "./controllers/app-controller";
 import { AddTorrentDialog } from "./layout/add-torrent-dialog";
 import { ConfirmDialog } from "./layout/confirm-dialog";
 import { ContentWindow } from "./layout/content-window";
+import { FilePickerDialog } from "./layout/file-picker-dialog";
 import { Sidebar } from "./layout/sidebar";
 import { StatusBar } from "./layout/status-bar";
 import { ToastManager } from "./layout/toast-manager";
@@ -37,6 +38,7 @@ export class App {
 	private bridge!: TorrentBridge;
 	private addDialog!: AddTorrentDialog;
 	private confirmDialog!: ConfirmDialog;
+	private filePickerDialog!: FilePickerDialog;
 	private layout!: LayoutDimensions;
 	private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -66,6 +68,7 @@ export class App {
 			config.torrentFolder,
 		);
 		this.confirmDialog = new ConfirmDialog(this.renderer, this.layout);
+		this.filePickerDialog = new FilePickerDialog(this.renderer, this.layout);
 
 		this.controller = new AppController(
 			this.renderer,
@@ -84,11 +87,30 @@ export class App {
 		};
 
 		this.controller.onDialogClose = () => {
-			this.addDialog.close();
+			if (this.filePickerDialog.getIsOpen()) {
+				this.filePickerDialog.confirmWithAllFiles();
+			} else {
+				this.addDialog.close();
+			}
 		};
 
 		this.controller.onDialogInput = (key) => {
+			if (this.filePickerDialog.getIsOpen())
+				return this.filePickerDialog.handleInput(key);
 			return this.addDialog.handleInput(key);
+		};
+
+		this.filePickerDialog.onConfirm = (id, selectedIndices) => {
+			this.controller.focusMode = "global";
+			this.bridge.setFileSelection(id, selectedIndices);
+			this.bridge.startTorrent(id).catch((err: unknown) => {
+				this.toastManager.show({
+					id: `start-err-${Date.now()}`,
+					type: "error",
+					title: "Failed to start",
+					message: err instanceof Error ? err.message : String(err),
+				});
+			});
 		};
 
 		this.controller.onDialogPaste = (event: PasteEvent) => {
@@ -153,6 +175,7 @@ export class App {
 			this.toastManager.updateLayout(this.layout);
 			this.addDialog.updateLayout(this.layout);
 			this.confirmDialog.updateLayout(this.layout);
+			this.filePickerDialog.updateLayout(this.layout);
 		}, 100);
 	}
 
@@ -173,14 +196,22 @@ export class App {
 			this.renderer.requestRender();
 
 			if (result.added) {
-				this.bridge.startTorrent(result.id).catch((err: unknown) => {
-					this.toastManager.show({
-						id: `start-err-${Date.now()}`,
-						type: "error",
-						title: "Failed to start",
-						message: err instanceof Error ? err.message : String(err),
+				const torrent = this.store
+					.getState()
+					.torrents.find((t) => t.id === result.id);
+				if (torrent && torrent.files.length > 1) {
+					this.controller.focusMode = "dialog";
+					this.filePickerDialog.open(result.id, torrent.files, torrent.name);
+				} else {
+					this.bridge.startTorrent(result.id).catch((err: unknown) => {
+						this.toastManager.show({
+							id: `start-err-${Date.now()}`,
+							type: "error",
+							title: "Failed to start",
+							message: err instanceof Error ? err.message : String(err),
+						});
 					});
-				});
+				}
 			}
 		} catch (err) {
 			this.toastManager.show({

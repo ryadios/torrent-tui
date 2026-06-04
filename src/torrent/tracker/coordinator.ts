@@ -66,7 +66,8 @@ export class TrackerCoordinator {
 		this.announceTracker = options.announceTracker ?? announceSingleTracker;
 		this.scheduler = options.scheduler ?? {
 			setTimeout: (fn, delayMs) => setTimeout(fn, delayMs),
-			clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+			clearTimeout: (handle) =>
+				clearTimeout(handle as ReturnType<typeof setTimeout>),
 		};
 
 		for (const url of uniqueTrackerUrls(metadata)) {

@@ -22,7 +22,7 @@ export class ToastManager {
 		const x = this.layout.terminal.width - TOAST_WIDTH - TOAST_MARGIN;
 		const y = this.calculateYPosition();
 
-		const toast = new Toast(this.renderer, config, this.layout, x, y);
+		const toast = new Toast(this.renderer, config, x, y);
 		this.toasts.push(toast);
 		toast.addToRenderer();
 		this.repositionToasts();

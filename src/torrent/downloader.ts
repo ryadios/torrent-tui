@@ -15,6 +15,23 @@ import type { StorageManager } from "./storage.ts";
 const BLOCK_SIZE = 16_384;
 const PIPELINE_DEPTH = 15;
 const CORRUPT_STRIKE_LIMIT = 2;
+const DEFAULT_MAX_UPLOAD_QUEUE_PER_PEER = 32;
+const DEFAULT_MAX_UPLOAD_QUEUE_GLOBAL = 512;
+
+export interface DownloaderOptions {
+	downloadRateLimitBps?: number;
+	uploadRateLimitBps?: number;
+	skippedFileIndices?: Set<number>;
+	maxUploadQueuePerPeer?: number;
+	maxUploadQueueGlobal?: number;
+}
+
+interface UploadRequest {
+	conn: PeerConnection;
+	index: number;
+	begin: number;
+	length: number;
+}
 
 interface InProgressPiece {
 	blocks: (Buffer | null)[];
@@ -38,18 +55,46 @@ export class Downloader extends EventEmitter {
 	private bannedPeers = new Set<string>();
 	private nextPieceIndex = 0;
 	private bytesThisSecond = 0;
-	private lastSpeedReset = Date.now();
 	private speedBytesPerSec = 0;
 	private endgame = false;
 	private picker!: PiecePicker;
+
+	// Rate limiting
+	private downloadLimitBps: number;
+	private downloadTokens: number;
+	private uploadLimitBps: number;
+	private uploadTokens: number;
+	private uploadQueue: UploadRequest[] = [];
+	private uploadQueueCounts = new Map<string, number>();
+	private maxUploadQueuePerPeer: number;
+	private maxUploadQueueGlobal: number;
+	private intervalHandle: ReturnType<typeof setInterval> | null = null;
+
+	// File selection
+	private skippedFileIndices: Set<number>;
+	private wantedPieces: Set<number>;
+	private downloadedWanted = 0;
 
 	constructor(
 		private metadata: TorrentMetadata,
 		private storage: StorageManager,
 		private manager: PeerManager,
 		private downloadPath: string,
+		options: DownloaderOptions = {},
 	) {
 		super();
+		this.downloadLimitBps = options.downloadRateLimitBps ?? 0;
+		this.downloadTokens =
+			this.downloadLimitBps > 0 ? this.downloadLimitBps : Infinity;
+		this.uploadLimitBps = options.uploadRateLimitBps ?? 0;
+		this.uploadTokens =
+			this.uploadLimitBps > 0 ? this.uploadLimitBps : Infinity;
+		this.maxUploadQueuePerPeer =
+			options.maxUploadQueuePerPeer ?? DEFAULT_MAX_UPLOAD_QUEUE_PER_PEER;
+		this.maxUploadQueueGlobal =
+			options.maxUploadQueueGlobal ?? DEFAULT_MAX_UPLOAD_QUEUE_GLOBAL;
+		this.skippedFileIndices = options.skippedFileIndices ?? new Set();
+		this.wantedPieces = this.computeWantedPieces();
 	}
 
 	start(): void {
@@ -57,15 +102,48 @@ export class Downloader extends EventEmitter {
 			this.metadata.pieceCount,
 			(i) => this.storage.hasPiece(i),
 			(i) => this.inProgress.has(i),
+			(i) => this.wantedPieces.has(i),
 		);
 
 		this.loadResume();
+
+		// Count already-verified wanted pieces (resume may have populated storage)
+		this.downloadedWanted = 0;
+		for (const i of this.wantedPieces) {
+			if (this.storage.hasPiece(i)) this.downloadedWanted++;
+		}
+
 		this.advanceNextPiece();
 
-		if (this.nextPieceIndex >= this.metadata.pieceCount) {
-			this.emit("complete");
+		if (this.downloadedWanted >= this.wantedPieces.size) {
+			this.emitWantedComplete();
 			return;
 		}
+
+		// 1s interval: refresh rate-limit tokens + report speed
+		this.intervalHandle = setInterval(() => {
+			this.downloadTokens = refillTokens(
+				this.downloadTokens,
+				this.downloadLimitBps,
+			);
+			this.uploadTokens = refillTokens(this.uploadTokens, this.uploadLimitBps);
+			this.drainUploadQueue();
+			this.speedBytesPerSec = this.bytesThisSecond;
+			this.bytesThisSecond = 0;
+			if (!this.stopped && !this.paused) {
+				this.emit(
+					"progress",
+					this.downloadedWanted,
+					this.wantedPieces.size,
+					this.speedBytesPerSec,
+				);
+				if (this.downloadLimitBps > 0) {
+					for (const conn of this.manager.connections.values()) {
+						if (!conn.amChoked) this.fillPipeline(conn);
+					}
+				}
+			}
+		}, 1_000);
 
 		// Wire up existing peers and seed their availability into the picker
 		for (const conn of this.manager.connections.values()) {
@@ -84,6 +162,12 @@ export class Downloader extends EventEmitter {
 
 	stop(): void {
 		this.stopped = true;
+		if (this.intervalHandle) {
+			clearInterval(this.intervalHandle);
+			this.intervalHandle = null;
+		}
+		this.uploadQueue = [];
+		this.uploadQueueCounts.clear();
 	}
 
 	pause(): void {
@@ -130,14 +214,18 @@ export class Downloader extends EventEmitter {
 		conn.on("request", (index: number, begin: number, length: number) => {
 			if (conn.peerChoked) return; // we choked this peer — don't serve
 			if (!this.storage.hasPiece(index)) return;
-			const piece = this.storage.readPieceSync(index);
-			const block = Buffer.from(piece).subarray(begin, begin + length);
-			conn.sendPiece(index, begin, block);
+			if (this.uploadLimitBps > 0) {
+				if (!this.enqueueUpload(conn, index, begin, length)) return;
+				this.drainUploadQueue();
+			} else {
+				this.serveUpload(conn, index, begin, length);
+			}
 		});
 
 		conn.on("disconnect", () => {
 			this.picker.removePeer(conn);
 			this.clearPending(key);
+			this.removeQueuedUploadsForPeer(conn);
 		});
 	}
 
@@ -150,6 +238,7 @@ export class Downloader extends EventEmitter {
 		this.pendingRequests.set(key, pending);
 
 		while (pending.size < PIPELINE_DEPTH) {
+			if (this.downloadLimitBps > 0 && this.downloadTokens < BLOCK_SIZE) break;
 			const next = this.nextBlock(conn);
 			if (!next) break;
 			const { pieceIndex, begin, length } = next;
@@ -157,6 +246,7 @@ export class Downloader extends EventEmitter {
 			pending.add(reqKey);
 			this.assignRequest(key, reqKey);
 			conn.sendRequest(pieceIndex, begin, length);
+			if (this.downloadLimitBps > 0) this.downloadTokens -= length;
 		}
 	}
 
@@ -310,6 +400,9 @@ export class Downloader extends EventEmitter {
 		this.storage.writePieceSync(index, assembled);
 		this.saveResume();
 
+		// Track wanted piece completion
+		if (this.wantedPieces.has(index)) this.downloadedWanted++;
+
 		// Broadcast HAVE to all connected peers
 		for (const peer of this.manager.connections.values()) {
 			if (`${peer.address}:${peer.port}` !== key) peer.sendHave(index);
@@ -318,24 +411,16 @@ export class Downloader extends EventEmitter {
 		this.advanceNextPiece();
 		this.emit("piece:verified", index);
 
-		// Speed tracking
-		const now = Date.now();
-		if (now - this.lastSpeedReset >= 1_000) {
-			this.speedBytesPerSec = this.bytesThisSecond;
-			this.bytesThisSecond = 0;
-			this.lastSpeedReset = now;
-		}
-
 		this.emit(
 			"progress",
-			this.storage.downloadedCount,
-			this.metadata.pieceCount,
+			this.downloadedWanted,
+			this.wantedPieces.size,
 			this.speedBytesPerSec,
 		);
 
-		if (this.storage.downloadedCount === this.metadata.pieceCount) {
+		if (this.downloadedWanted >= this.wantedPieces.size) {
 			this.stop();
-			this.emit("complete");
+			this.emitWantedComplete();
 		}
 	}
 
@@ -426,7 +511,7 @@ export class Downloader extends EventEmitter {
 		}
 
 		let hasUnstartedMissingPiece = false;
-		for (let i = 0; i < this.metadata.pieceCount; i++) {
+		for (const i of this.wantedPieces) {
 			if (!this.storage.hasPiece(i) && !this.inProgress.has(i)) {
 				hasUnstartedMissingPiece = true;
 				break;
@@ -464,10 +549,120 @@ export class Downloader extends EventEmitter {
 			this.storage.getDownloadedPieces(),
 		);
 	}
+
+	private computeWantedPieces(): Set<number> {
+		if (this.skippedFileIndices.size === 0) {
+			const all = new Set<number>();
+			for (let i = 0; i < this.metadata.pieceCount; i++) all.add(i);
+			return all;
+		}
+		const wanted = new Set<number>();
+		for (let i = 0; i < this.metadata.pieceCount; i++) {
+			if (this.isPieceWanted(i)) wanted.add(i);
+		}
+		return wanted;
+	}
+
+	private isPieceWanted(pieceIndex: number): boolean {
+		if (this.skippedFileIndices.size === 0) return true;
+
+		const pieceStart = pieceIndex * this.metadata.pieceLength;
+		const isLast = pieceIndex === this.metadata.pieceCount - 1;
+		const pieceLen = isLast
+			? this.metadata.totalSize - pieceStart
+			: this.metadata.pieceLength;
+		const pieceEnd = pieceStart + pieceLen;
+
+		for (let fi = 0; fi < this.metadata.files.length; fi++) {
+			if (this.skippedFileIndices.has(fi)) continue;
+			const file = this.metadata.files[fi];
+			if (!file) continue;
+			if (pieceStart < file.offset + file.length && pieceEnd > file.offset) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private serveUpload(
+		conn: PeerConnection,
+		index: number,
+		begin: number,
+		length: number,
+	): void {
+		const piece = this.storage.readPieceSync(index);
+		const block = Buffer.from(piece).subarray(begin, begin + length);
+		conn.sendPiece(index, begin, block);
+	}
+
+	private uploadPeerKey(conn: PeerConnection): string {
+		return `${conn.address}:${conn.port}`;
+	}
+
+	private enqueueUpload(
+		conn: PeerConnection,
+		index: number,
+		begin: number,
+		length: number,
+	): boolean {
+		const key = this.uploadPeerKey(conn);
+		const perPeerCount = this.uploadQueueCounts.get(key) ?? 0;
+		if (
+			this.uploadQueue.length >= this.maxUploadQueueGlobal ||
+			perPeerCount >= this.maxUploadQueuePerPeer
+		) {
+			return false;
+		}
+		this.uploadQueue.push({ conn, index, begin, length });
+		this.uploadQueueCounts.set(key, perPeerCount + 1);
+		return true;
+	}
+
+	private decrementUploadQueueCount(conn: PeerConnection): void {
+		const key = this.uploadPeerKey(conn);
+		const next = (this.uploadQueueCounts.get(key) ?? 1) - 1;
+		if (next <= 0) {
+			this.uploadQueueCounts.delete(key);
+			return;
+		}
+		this.uploadQueueCounts.set(key, next);
+	}
+
+	private removeQueuedUploadsForPeer(conn: PeerConnection): void {
+		const key = this.uploadPeerKey(conn);
+		this.uploadQueue = this.uploadQueue.filter(
+			(req) => this.uploadPeerKey(req.conn) !== key,
+		);
+		this.uploadQueueCounts.delete(key);
+	}
+
+	private drainUploadQueue(): void {
+		while (this.uploadQueue.length > 0 && this.uploadTokens >= BLOCK_SIZE) {
+			const req = this.uploadQueue.shift();
+			if (!req) break;
+			this.decrementUploadQueueCount(req.conn);
+			if (req.conn.peerChoked || !this.storage.hasPiece(req.index)) continue;
+			this.uploadTokens -= req.length;
+			this.serveUpload(req.conn, req.index, req.begin, req.length);
+		}
+	}
+
+	private emitWantedComplete(): void {
+		this.emit("wantedComplete");
+		if (this.storage.downloadedCount >= this.metadata.pieceCount) {
+			this.emit("complete");
+		}
+	}
 }
 
 function bufEqual(a: Uint8Array, b: Uint8Array): boolean {
 	if (a.length !== b.length) return false;
 	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
 	return true;
+}
+
+function refillTokens(current: number, limitBps: number): number {
+	if (limitBps <= 0) return Infinity;
+	const capacity = Math.max(BLOCK_SIZE, limitBps);
+	return Math.min(capacity, current + limitBps);
 }

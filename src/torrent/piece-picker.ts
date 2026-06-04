@@ -7,6 +7,7 @@ export class PiecePicker {
 		private pieceCount: number,
 		private hasPiece: (i: number) => boolean,
 		private isInProgress: (i: number) => boolean,
+		private isWanted: (i: number) => boolean = () => true,
 	) {}
 
 	addPeer(conn: PeerConnection): void {
@@ -34,7 +35,7 @@ export class PiecePicker {
 		);
 	}
 
-	// Returns the lowest-availability unstarted piece this peer has that we need.
+	// Returns the lowest-availability unstarted wanted piece this peer has.
 	// In-progress pieces are handled by Tier 1 in nextBlock() — skip them here.
 	pick(conn: PeerConnection): number | null {
 		let best = -1;
@@ -43,6 +44,7 @@ export class PiecePicker {
 		for (let i = 0; i < this.pieceCount; i++) {
 			if (this.hasPiece(i)) continue;
 			if (this.isInProgress(i)) continue; // Tier 1 handles these
+			if (!this.isWanted(i)) continue;
 			if (!conn.hasPiece(i)) continue;
 
 			const avail = this.availability.get(i) ?? 1;

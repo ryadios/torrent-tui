@@ -93,7 +93,8 @@ export function parseHTTPTrackerResponse(buffer: Uint8Array): TrackerResponse {
 	}
 
 	const peersRaw = decoded.peers;
-	const interval = typeof decoded.interval === "number" ? decoded.interval : 1800;
+	const interval =
+		typeof decoded.interval === "number" ? decoded.interval : 1800;
 	const complete = typeof decoded.complete === "number" ? decoded.complete : 0;
 	const incomplete =
 		typeof decoded.incomplete === "number" ? decoded.incomplete : 0;

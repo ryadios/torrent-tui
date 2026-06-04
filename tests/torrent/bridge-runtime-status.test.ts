@@ -19,12 +19,20 @@ describe("deriveRuntimeStatus", () => {
 	});
 
 	test("connecting when peers present but no activity yet", () => {
-		expect(deriveRuntimeStatus("downloading", 1, false, false)).toBe("connecting");
-		expect(deriveRuntimeStatus("downloading", 3, false, false)).toBe("connecting");
+		expect(deriveRuntimeStatus("downloading", 1, false, false)).toBe(
+			"connecting",
+		);
+		expect(deriveRuntimeStatus("downloading", 3, false, false)).toBe(
+			"connecting",
+		);
 	});
 
 	test("downloading when peers present and activity seen", () => {
-		expect(deriveRuntimeStatus("downloading", 1, false, true)).toBe("downloading");
-		expect(deriveRuntimeStatus("downloading", 4, false, true)).toBe("downloading");
+		expect(deriveRuntimeStatus("downloading", 1, false, true)).toBe(
+			"downloading",
+		);
+		expect(deriveRuntimeStatus("downloading", 4, false, true)).toBe(
+			"downloading",
+		);
 	});
 });

@@ -1,10 +1,6 @@
-import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import { homedir } from "node:os";
-import type {
-	TorrentFileState,
-	TorrentPeerState,
-	TorrentState,
-} from "../store";
+import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
+import type { TorrentPeerState, TorrentState } from "../store";
 import { getTheme } from "../theme";
 import type { LayoutDimensions } from "../types/layout";
 
@@ -17,7 +13,9 @@ interface DetailSections {
 
 interface DetailBodyRow {
 	container: BoxRenderable;
-	text: TextRenderable;
+	leftText: TextRenderable;
+	barText: TextRenderable; // always FILE_BAR_WIDTH chars — no empty-string layout issues
+	rightText: TextRenderable;
 	scrollbar: TextRenderable;
 }
 
@@ -111,12 +109,11 @@ function buildPeerColumns(innerWidth: number): number[] {
 	]);
 }
 
-function buildFileColumns(innerWidth: number): number[] {
-	return distributeWidths(innerWidth, [
-		{ min: 7, preferred: 10 },
-		{ min: 12, preferred: Math.max(12, innerWidth - 11) },
-	]);
-}
+const FILE_INDICATOR_W = 4; // "[✓]" or "[ ]" padded to 4
+const FILE_SIZE_W = 9; // right-aligned size (matches torrent-view SIZE_W)
+const FILE_LEFT_W = FILE_INDICATOR_W + 1 + FILE_SIZE_W + 1; // 15 (+1 space before bar)
+const FILE_BAR_WIDTH = 10;
+export const FILE_TAB_FIXED_LINES = 3;
 
 function buildPeerRow(
 	peer: TorrentPeerState,
@@ -159,42 +156,28 @@ function buildPeerSections(
 	};
 }
 
-function buildFileRow(
-	file: TorrentFileState,
-	torrentName: string,
-	widths: number[],
-): string {
-	const [sizeW, pathW] = widths;
-	const prefix = `${torrentName}/`;
-	const displayPath = file.path.startsWith(prefix)
-		? file.path.slice(prefix.length)
-		: file.path;
-	return [
-		padCell(formatBytes(file.length), sizeW ?? 0, "right"),
-		padCell(displayPath, pathW ?? 0),
-	].join(" ");
-}
-
 function buildFileSections(
 	torrent: TorrentState,
 	innerWidth: number,
 ): DetailSections {
-	const widths = buildFileColumns(innerWidth);
+	const pathW = Math.max(4, innerWidth - FILE_LEFT_W - FILE_BAR_WIDTH - 1);
+	const header =
+		padCell("", FILE_INDICATOR_W) +
+		" " +
+		padCell("Size", FILE_SIZE_W, "right") +
+		" " + // gap between size and bar
+		" ".repeat(FILE_BAR_WIDTH) +
+		" " + // gap before path
+		padCell("Path", pathW);
 	return {
 		fixedLines: [
 			`Files: ${torrent.files.length}`,
 			`Download path: ${abbreviateHomePath(torrent.targetPath)}`,
-			[
-				padCell("Size", widths[0] ?? 0, "right"),
-				padCell("Path", widths[1] ?? 0),
-			].join(" "),
+			header,
 		],
+		// Content is computed directly in update(); only the count matters here.
 		scrollLines:
-			torrent.files.length === 0
-				? ["No files"]
-				: torrent.files.map((file) =>
-						buildFileRow(file, torrent.name, widths),
-					),
+			torrent.files.length === 0 ? ["No files"] : torrent.files.map(() => ""),
 	};
 }
 
@@ -269,6 +252,7 @@ export class DetailPanel {
 		focused: boolean,
 		scrollOffset = 0,
 		placeholder: string | null = null,
+		filesTabCursor = -1,
 	): void {
 		const theme = getTheme();
 		(this.container as unknown as { borderColor: string }).borderColor = focused
@@ -317,18 +301,89 @@ export class DetailPanel {
 			scrollOffset,
 		);
 
+		const isFilesTab = tab === "Files" && torrent !== null;
+		const filePathW = Math.max(1, textWidth - FILE_LEFT_W - FILE_BAR_WIDTH - 1);
+
 		for (let i = 0; i < this.bodyRows.length; i++) {
 			const row = this.bodyRows[i];
 			if (!row) continue;
-			setText(row.text, truncate(lines[i] ?? "", textWidth).padEnd(textWidth));
-			setFg(
-				row.text,
+
+			const scrollRowIndex = i - stableFixedLines.length;
+			const fileIndex = scrollOffset + scrollRowIndex;
+			const file =
+				isFilesTab && scrollRowIndex >= 0 && torrent
+					? (torrent.files[fileIndex] ?? null)
+					: null;
+
+			const isCursorRow =
+				isFilesTab &&
+				focused &&
+				scrollRowIndex >= 0 &&
+				fileIndex === filesTabCursor;
+
+			const textFg =
 				torrent === null
 					? theme.fgMuted
-					: i === 0
-						? theme.fgPrimary
-						: theme.fgSecondary,
-			);
+					: isCursorRow
+						? theme.accent
+						: i === 0
+							? theme.fgPrimary
+							: theme.fgSecondary;
+
+			if (file) {
+				// File row: [✓]/[ ] + size + space | bar (selected only) | path
+				const prefix = `${torrent?.name}/`;
+				const displayPath = file.path.startsWith(prefix)
+					? file.path.slice(prefix.length)
+					: file.path;
+				const indicator = file.selected ? "[✓]" : "[ ]";
+				const rowFg = file.selected
+					? textFg
+					: isCursorRow
+						? theme.fgSecondary
+						: theme.fgMuted;
+
+				setText(
+					row.leftText,
+					padCell(indicator, FILE_INDICATOR_W) +
+						" " +
+						padCell(formatBytes(file.length), FILE_SIZE_W, "right") +
+						" ", // space before bar
+				);
+				setFg(row.leftText, rowFg);
+
+				// Single bar renderable: filled ━ + spaces, always FILE_BAR_WIDTH chars
+				if (file.selected) {
+					const pct =
+						file.length > 0
+							? Math.min(1, file.downloadedBytes / file.length)
+							: 0;
+					const filledLen = Math.round(pct * FILE_BAR_WIDTH);
+					setText(
+						row.barText,
+						"━".repeat(filledLen) + " ".repeat(FILE_BAR_WIDTH - filledLen),
+					);
+					setFg(row.barText, theme.accent);
+				} else {
+					setText(row.barText, " ".repeat(FILE_BAR_WIDTH));
+				}
+
+				setText(
+					row.rightText,
+					` ${truncate(displayPath, filePathW - 1).padEnd(filePathW - 1)}`,
+				);
+				setFg(row.rightText, rowFg);
+			} else {
+				// Non-file row: full content in leftText, barText invisible
+				setText(
+					row.leftText,
+					truncate(lines[i] ?? "", textWidth).padEnd(textWidth),
+				);
+				setText(row.barText, "");
+				setText(row.rightText, "");
+				setFg(row.leftText, textFg);
+			}
+
 			setText(row.scrollbar, thumb[i]?.char ?? "");
 			setFg(
 				row.scrollbar,
@@ -387,7 +442,16 @@ export class DetailPanel {
 				height: 1,
 				flexDirection: "row",
 			});
-			const text = new TextRenderable(this.renderer, {
+			const leftText = new TextRenderable(this.renderer, {
+				content: "",
+				fg: theme.fgSecondary,
+			});
+			// Single bar renderable — always FILE_BAR_WIDTH chars, never empty string
+			const barText = new TextRenderable(this.renderer, {
+				content: " ".repeat(FILE_BAR_WIDTH),
+				fg: theme.accent,
+			});
+			const rightText = new TextRenderable(this.renderer, {
 				content: "",
 				fg: theme.fgSecondary,
 			});
@@ -395,10 +459,18 @@ export class DetailPanel {
 				content: "",
 				fg: theme.fgMuted,
 			});
-			rowContainer.add(text);
+			rowContainer.add(leftText);
+			rowContainer.add(barText);
+			rowContainer.add(rightText);
 			rowContainer.add(scrollbar);
 			container.add(rowContainer);
-			bodyRows.push({ container: rowContainer, text, scrollbar });
+			bodyRows.push({
+				container: rowContainer,
+				leftText,
+				barText,
+				rightText,
+				scrollbar,
+			});
 		}
 		return bodyRows;
 	}

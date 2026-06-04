@@ -4,6 +4,7 @@ import type { ConfirmDialog } from "../layout/confirm-dialog";
 import type { ContentWindow, FocusArea } from "../layout/content-window";
 import {
 	type DetailTab,
+	FILE_TAB_FIXED_LINES,
 	getDetailMaxScrollOffset,
 } from "../layout/detail-panel";
 import type { Sidebar } from "../layout/sidebar";
@@ -33,6 +34,7 @@ export class AppController {
 	};
 	private lastDetailTorrentId: string | null = null;
 	private pendingDeleteId: string | null = null;
+	private filesTabCursor = 0;
 
 	// Injected by App after bridge/dialog are created
 	onAddTorrent?: () => void;
@@ -95,6 +97,7 @@ export class AppController {
 				this.tableSelectedIndex,
 				this.getDetailTab(),
 				this.getDetailScrollOffset(),
+				this.filesTabCursor,
 			);
 			this.statusBar.update(state, this.focusArea);
 		});
@@ -117,6 +120,7 @@ export class AppController {
 			this.tableSelectedIndex,
 			this.getDetailTab(),
 			this.getDetailScrollOffset(),
+			this.filesTabCursor,
 		);
 		this.statusBar.update(state, this.focusArea);
 	}
@@ -186,6 +190,7 @@ export class AppController {
 		if (torrentId !== this.lastDetailTorrentId) {
 			this.lastDetailTorrentId = torrentId;
 			this.resetDetailScrollOffsets();
+			this.filesTabCursor = 0;
 		}
 		const maxOffset = getDetailMaxScrollOffset(
 			this.getSelectedTorrent(),
@@ -289,7 +294,11 @@ export class AppController {
 					this.refreshView();
 				}
 			} else if (this.focusArea === "details") {
-				this.moveDetailScroll(1);
+				if (this.getDetailTab() === "Files") {
+					this.moveFileCursor(1);
+				} else {
+					this.moveDetailScroll(1);
+				}
 			}
 		} else if (key.name === "k" || key.name === "up") {
 			if (this.focusArea === "sidebar") {
@@ -306,7 +315,11 @@ export class AppController {
 					this.refreshView();
 				}
 			} else if (this.focusArea === "details") {
-				this.moveDetailScroll(-1);
+				if (this.getDetailTab() === "Files") {
+					this.moveFileCursor(-1);
+				} else {
+					this.moveDetailScroll(-1);
+				}
 			}
 		} else if (key.name === "space") {
 			if (this.focusArea === "table") {
@@ -360,6 +373,28 @@ export class AppController {
 		} else if (key.name === "q") {
 			this.onQuit?.();
 		}
+	}
+
+	private moveFileCursor(delta: number): void {
+		const torrent = this.getSelectedTorrent();
+		if (!torrent || torrent.files.length === 0) return;
+		const max = torrent.files.length - 1;
+		this.filesTabCursor = Math.max(
+			0,
+			Math.min(this.filesTabCursor + delta, max),
+		);
+
+		// Scroll to keep cursor visible
+		const bodyRows = this.contentWindow.getDetailBodyRowCount();
+		const visibleRows = Math.max(1, bodyRows - FILE_TAB_FIXED_LINES);
+		const offset = this.detailScrollOffsets.Files ?? 0;
+		if (this.filesTabCursor >= offset + visibleRows) {
+			this.detailScrollOffsets.Files = this.filesTabCursor - visibleRows + 1;
+		} else if (this.filesTabCursor < offset) {
+			this.detailScrollOffsets.Files = this.filesTabCursor;
+		}
+
+		this.refreshView();
 	}
 
 	private handlePaste(event: PasteEvent): void {
