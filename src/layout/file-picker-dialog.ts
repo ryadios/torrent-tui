@@ -52,6 +52,7 @@ export class FilePickerDialog {
 	private isOpen = false;
 
 	private torrentId = "";
+	private torrentName = "";
 	private files: TorrentFileState[] = [];
 	private selectedSet = new Set<number>();
 	private cursor = 0;
@@ -68,9 +69,10 @@ export class FilePickerDialog {
 		this.createElements();
 	}
 
-	open(torrentId: string, files: TorrentFileState[]): void {
+	open(torrentId: string, files: TorrentFileState[], torrentName = ""): void {
 		if (this.isOpen) return;
 		this.torrentId = torrentId;
+		this.torrentName = torrentName;
 		this.files = files;
 		this.cursor = 0;
 		this.scrollOffset = 0;
@@ -141,6 +143,7 @@ export class FilePickerDialog {
 			return true;
 		}
 		if (key.name === "return") {
+			if (this.selectedSet.size === 0) return true;
 			const id = this.torrentId;
 			const allSelected = this.selectedSet.size === this.files.length;
 			const selectedIndices = allSelected
@@ -202,7 +205,12 @@ export class FilePickerDialog {
 
 			const indicator = isSelected ? "[✓]" : "[ ]";
 			const size = formatBytes(file.length).padStart(SIZE_W);
-			const name = truncate(file.path, nameW);
+			const prefix = `${this.torrentName}/`;
+			const displayPath =
+				this.torrentName.length > 0 && file.path.startsWith(prefix)
+					? file.path.slice(prefix.length)
+					: file.path;
+			const name = truncate(displayPath, nameW);
 			setText(row.text, `${" ".repeat(MARGIN) + indicator} ${size} ${name}`);
 			setFg(
 				row.text,

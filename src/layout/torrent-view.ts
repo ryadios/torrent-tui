@@ -28,9 +28,16 @@ const RIGHT_W =
 
 function calcWidths(cw: number) {
 	const available = cw - PREFIX_W - RIGHT_W;
+	if (cw < PREFIX_W + RIGHT_W + 12) {
+		return {
+			nameWidth: Math.max(1, available),
+			gap: 0,
+			rowWidth: Math.max(0, cw),
+		};
+	}
 	const nameWidth = Math.max(12, Math.min(Math.floor(cw * 0.4), available));
 	const gap = Math.max(0, available - nameWidth);
-	return { nameWidth, gap };
+	return { nameWidth, gap, rowWidth: Math.max(0, cw) };
 }
 
 function rightGroup(
@@ -56,8 +63,10 @@ function rightGroup(
 }
 
 function formatCombinedSpeed(dl: number, ul: number): string {
-	const d = dl > 0 ? `↓ ${formatSpeed(dl)}` : "";
-	const u = ul > 0 ? `↑ ${formatSpeed(ul)}` : "";
+	const fd = formatSpeed(dl);
+	const fu = formatSpeed(ul);
+	const d = fd ? `↓ ${fd}` : "";
+	const u = fu ? `↑ ${fu}` : "";
 	return `${d.padEnd(10)}  ${u}`.slice(0, SPEED_W).padEnd(SPEED_W);
 }
 
@@ -71,8 +80,12 @@ function buildRow(
 	gap: number,
 	right: string,
 	prefix = "  ",
+	maxWidth = Infinity,
 ): string {
-	return prefix + left.padEnd(nameWidth) + " ".repeat(gap) + right;
+	return (prefix + left.padEnd(nameWidth) + " ".repeat(gap) + right).slice(
+		0,
+		maxWidth,
+	);
 }
 
 function truncate(s: string, max: number): string {
@@ -180,11 +193,14 @@ export class TorrentTable {
 		selectedIndex: number,
 		focusArea: FocusArea,
 	): void {
-		const visibleTorrents = torrents.slice(0, this.maxVisibleRows());
-		this.lastTorrents = visibleTorrents;
+		this.lastTorrents = torrents;
 		this.lastSelectedIndex = selectedIndex;
 		this.lastFocusArea = focusArea;
+		this.renderRows();
+	}
 
+	private renderRows(): void {
+		const visibleTorrents = this.lastTorrents.slice(0, this.maxVisibleRows());
 		if (visibleTorrents.length !== this.rows.length) {
 			this.rebuildRows(visibleTorrents.length);
 		}
@@ -196,7 +212,7 @@ export class TorrentTable {
 			this.updateRow(
 				row,
 				torrent,
-				i === selectedIndex && focusArea === "table",
+				i === this.lastSelectedIndex && this.lastFocusArea === "table",
 			);
 		}
 	}
@@ -206,7 +222,7 @@ export class TorrentTable {
 		this.widths = calcWidths(layout.content.width);
 		(this.container as unknown as { width: number }).width =
 			layout.content.width;
-		const { nameWidth, gap } = this.widths;
+		const { nameWidth, gap, rowWidth } = this.widths;
 		setText(
 			this.headerText,
 			buildRow(
@@ -214,9 +230,11 @@ export class TorrentTable {
 				nameWidth,
 				gap,
 				rightGroup("Size", "Status", "Speed", "ETA", "Peers", "Seeds", "Leech"),
+				"  ",
+				rowWidth,
 			),
 		);
-		this.update(this.lastTorrents, this.lastSelectedIndex, this.lastFocusArea);
+		this.renderRows();
 	}
 
 	private rebuildRows(count: number): void {
@@ -235,7 +253,7 @@ export class TorrentTable {
 
 	private createRow(): TorrentRow {
 		const theme = getTheme();
-		const { nameWidth, gap } = this.widths;
+		const { nameWidth, gap, rowWidth } = this.widths;
 		const trailingW = gap + RIGHT_W;
 		const cw = this.layout.content.width;
 
@@ -246,6 +264,8 @@ export class TorrentTable {
 				nameWidth,
 				gap,
 				" ".repeat(RIGHT_W),
+				"  ",
+				rowWidth,
 			),
 			fg: theme.fgPrimary,
 		});
@@ -277,8 +297,10 @@ export class TorrentTable {
 		isSelected: boolean,
 	): void {
 		const theme = getTheme();
-		const { nameWidth, gap } = this.widths;
+		const { nameWidth, gap, rowWidth } = this.widths;
 		const trailingW = gap + RIGHT_W;
+		(row.metaRow as unknown as { width: number }).width = rowWidth;
+		(row.barRow as unknown as { width: number }).width = rowWidth;
 
 		const pct =
 			torrent.totalPieces > 0
@@ -335,6 +357,7 @@ export class TorrentTable {
 					formatCount(torrent.leechers),
 				),
 				prefix,
+				rowWidth,
 			),
 		);
 		setFg(row.metaText, isSelected ? theme.accent : theme.fgPrimary);
@@ -361,7 +384,7 @@ export class TorrentTable {
 		headerText: TextRenderable;
 	} {
 		const theme = getTheme();
-		const { nameWidth, gap } = this.widths;
+		const { nameWidth, gap, rowWidth } = this.widths;
 
 		const container = new BoxRenderable(this.renderer, {
 			position: "absolute",
@@ -377,6 +400,8 @@ export class TorrentTable {
 				nameWidth,
 				gap,
 				rightGroup("Size", "Status", "Speed", "ETA", "Peers", "Seeds", "Leech"),
+				"  ",
+				rowWidth,
 			),
 			fg: theme.fgPrimary,
 		});

@@ -201,7 +201,7 @@ export class App {
 					.torrents.find((t) => t.id === result.id);
 				if (torrent && torrent.files.length > 1) {
 					this.controller.focusMode = "dialog";
-					this.filePickerDialog.open(result.id, torrent.files);
+					this.filePickerDialog.open(result.id, torrent.files, torrent.name);
 				} else {
 					this.bridge.startTorrent(result.id).catch((err: unknown) => {
 						this.toastManager.show({
