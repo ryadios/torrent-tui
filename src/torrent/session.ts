@@ -91,6 +91,12 @@ export class TorrentSession extends EventEmitter {
 		downloader.on("progress", (dl: number, total: number, speed: number) =>
 			this.emit("progress", dl, total, speed),
 		);
+		downloader.on("wantedComplete", () => {
+			if (this.storage.downloadedCount < this.metadata.pieceCount) {
+				this.transition("stopped");
+			}
+			this.emit("wantedComplete");
+		});
 		downloader.on("complete", () => {
 			this.transition("seeding");
 			this.emit("complete");

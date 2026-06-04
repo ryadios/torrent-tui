@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { Downloader } from "../../src/torrent/downloader.ts";
 import { PiecePicker } from "../../src/torrent/piece-picker.ts";
 import {
@@ -13,6 +13,18 @@ import {
 	multiFileTorrentFixture,
 	singleFileTorrentFixture,
 } from "../helpers/torrent-fixtures.ts";
+
+const startedDownloaders: Downloader[] = [];
+
+afterEach(() => {
+	for (const downloader of startedDownloaders) downloader.stop();
+	startedDownloaders.length = 0;
+});
+
+function startDownloader(downloader: Downloader): void {
+	startedDownloaders.push(downloader);
+	downloader.start();
+}
 
 // --- PiecePicker: isWanted filter ---
 
@@ -94,7 +106,7 @@ describe("Downloader skippedFileIndices boundary", () => {
 					{ skippedFileIndices: new Set([0]) },
 				);
 
-				downloader.start();
+				startDownloader(downloader);
 
 				const requestedPieces = new Set(peer.requests.map((r) => r.index));
 				expect(requestedPieces.has(0)).toBe(false);
@@ -122,7 +134,7 @@ describe("Downloader skippedFileIndices boundary", () => {
 					{ skippedFileIndices: new Set([2]) },
 				);
 
-				downloader.start();
+				startDownloader(downloader);
 
 				const requestedPieces = new Set(peer.requests.map((r) => r.index));
 				expect(requestedPieces.has(0)).toBe(true);
@@ -148,7 +160,7 @@ describe("Downloader skippedFileIndices boundary", () => {
 					dir,
 				);
 
-				downloader.start();
+				startDownloader(downloader);
 
 				const requestedPieces = new Set(peer.requests.map((r) => r.index));
 				expect(requestedPieces.size).toBe(3);
@@ -177,7 +189,7 @@ describe("Downloader download rate limit", () => {
 					{ downloadRateLimitBps: 1 }, // 1 byte/s — less than BLOCK_SIZE
 				);
 
-				downloader.start();
+				startDownloader(downloader);
 
 				// tokens = 1 < BLOCK_SIZE (16384), so no requests sent
 				expect(peer.requests).toHaveLength(0);
@@ -202,7 +214,7 @@ describe("Downloader download rate limit", () => {
 					{ downloadRateLimitBps: 0 },
 				);
 
-				downloader.start();
+				startDownloader(downloader);
 				expect(peer.requests.length).toBeGreaterThan(0);
 			});
 		});
@@ -218,6 +230,10 @@ describe("Resume file selection", () => {
 
 	test("normalizeSelectedFileIndices returns null when all files are selected", () => {
 		expect(normalizeSelectedFileIndices([0, 1, 2], 3)).toBeNull();
+	});
+
+	test("normalizeSelectedFileIndices deduplicates before all-selected check", () => {
+		expect(normalizeSelectedFileIndices([0, 0, 1], 3)).toEqual([0, 1]);
 	});
 
 	test("normalizeSelectedFileIndices returns subset when partial selection stored", () => {
