@@ -189,11 +189,12 @@ export class TorrentBridge {
 						? "stopped"
 						: "checking";
 
-				const restoredSelection = normalizeSelectedFileIndices(
-					trustedResume?.data.selectedFileIndices ??
+				const restoredSelection =
+					trustedResume?.selectedFileIndices ??
+					normalizeSelectedFileIndices(
 						readResumeData(infoHash)?.selectedFileIndices,
-					metadata.files.length,
-				);
+						metadata.files.length,
+					);
 
 				const entry: TorrentEntry = {
 					torrentPath,
@@ -568,10 +569,18 @@ export class TorrentBridge {
 			? this.parseTorrent(entry.torrentPath)
 			: null;
 		if (metadata) {
+			const downloadedPieces = [
+				...(entry.session?.storage.getDownloadedPieces() ?? []),
+			];
+			const resumePieces =
+				downloadedPieces.length > 0
+					? downloadedPieces
+					: (loadTrustedResumeData(metadata, this.downloadPath)
+							?.verifiedPieces ?? []);
 			writeResumeData(
 				metadata,
 				this.downloadPath,
-				entry.session?.storage.getDownloadedPieces() ?? [],
+				resumePieces,
 				selectedIndices,
 			);
 		}
@@ -1049,6 +1058,7 @@ export function deriveRuntimeStatus(
 ): TorrentState["status"] {
 	if (paused) return "paused";
 	if (sessionStatus === "seeding") return "seeding";
+	if (sessionStatus === "stopped") return "stopped";
 	if (peerCount <= 0) return "stalled";
 	return hasTransferActivity ? "downloading" : "connecting";
 }

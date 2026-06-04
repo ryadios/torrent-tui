@@ -162,6 +162,7 @@ export function normalizeSelectedFileIndices(
 	const valid = stored.filter(
 		(i) => Number.isInteger(i) && i >= 0 && i < fileCount,
 	);
-	if (valid.length === fileCount) return null; // all selected = null
-	return [...new Set(valid)].sort((a, b) => a - b);
+	const unique = [...new Set(valid)].sort((a, b) => a - b);
+	if (unique.length === fileCount) return null; // all selected = null
+	return unique;
 }

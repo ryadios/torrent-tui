@@ -59,13 +59,10 @@ export class DiscoveryCoordinator {
 			numwant: options.numwant,
 			getSnapshot: options.getSnapshot,
 			announceTracker: options.announceTracker,
-			onPeers: (peers, response) => {
+			onPeers: (peers: PeerInfo[], response: TrackerResponse) => {
 				if (response) {
-					this.swarmSeeds = Math.max(this.swarmSeeds, response.complete ?? 0);
-					this.swarmLeechers = Math.max(
-						this.swarmLeechers,
-						response.incomplete ?? 0,
-					);
+					this.swarmSeeds = Number(response.complete ?? 0);
+					this.swarmLeechers = Number(response.incomplete ?? 0);
 				}
 				options.onPeers(peers, "tracker");
 			},
