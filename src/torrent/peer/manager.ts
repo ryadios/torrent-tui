@@ -7,7 +7,7 @@ import { PeerConnection } from "./connection.ts";
 import { buildExtensionReservedBytes } from "./extension.ts";
 import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { PeerListener } from "./listener.ts";
-import type { EncryptionPolicy } from "./mse.ts";
+import type { EncryptionPolicy, MseHandshakeResult } from "./mse.ts";
 import { respondMseHandshake } from "./mse.ts";
 import { getPeerId } from "./peer-id.ts";
 
@@ -200,9 +200,39 @@ export class PeerManager extends EventEmitter {
 			initialData,
 		);
 		if (result.initialData.length < HANDSHAKE_LEN) {
-			throw new Error("MSE peer did not send BitTorrent handshake");
+			this.waitForEncryptedInboundHandshake(socket, result);
+			return;
 		}
-		const parsed = parseHandshake(result.initialData, this.infoHash);
+		this.adoptEncryptedInbound(socket, result, result.initialData);
+	}
+
+	private waitForEncryptedInboundHandshake(
+		socket: import("node:net").Socket,
+		result: MseHandshakeResult,
+	): void {
+		let buffered = Buffer.from(result.initialData);
+		const onData = (chunk: Buffer): void => {
+			const plain = result.decrypt ? result.decrypt.update(chunk) : chunk;
+			buffered = Buffer.concat([buffered, plain]);
+			if (buffered.length < HANDSHAKE_LEN) return;
+			socket.removeListener("data", onData);
+			try {
+				this.adoptEncryptedInbound(socket, result, buffered);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				log("handshake", `FAIL (mse inbound)  ${msg}`);
+				socket.destroy();
+			}
+		};
+		socket.on("data", onData);
+	}
+
+	private adoptEncryptedInbound(
+		socket: import("node:net").Socket,
+		result: MseHandshakeResult,
+		initialData: Uint8Array,
+	): void {
+		const parsed = parseHandshake(initialData, this.infoHash);
 		const ip = socket.remoteAddress ?? "unknown";
 		const port = socket.remotePort ?? 0;
 		const key = `${ip}:${port}`;
@@ -222,7 +252,7 @@ export class PeerManager extends EventEmitter {
 		const conn = new PeerConnection(ip, port, this.infoHash, {
 			encryptionPolicy: this.encryptionPolicy,
 		});
-		const remainder = result.initialData.subarray(HANDSHAKE_LEN);
+		const remainder = initialData.subarray(HANDSHAKE_LEN);
 		conn.on("bitfield", () => {
 			if (conn.countPiecesPublic() > 0 && !conn.amInterested) {
 				conn.sendInterested();

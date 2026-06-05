@@ -152,7 +152,7 @@ export async function initiateMseHandshake(
 	const selected = decrypt
 		.update(await reader.read(4, timeoutMs))
 		.readUInt32BE(0);
-	if (selectCryptoMethod(cryptoProvide, policy) !== selected) {
+	if (!validateSelectedCrypto(selected, cryptoProvide, policy)) {
 		throw new Error("MSE crypto selection rejected");
 	}
 	const padLength = decrypt
@@ -167,6 +167,19 @@ export async function initiateMseHandshake(
 		initialData: selected === MSE_CRYPTO_RC4 ? decrypt.update(extra) : extra,
 		method: selected,
 	};
+}
+
+function validateSelectedCrypto(
+	selected: number,
+	cryptoProvide: number,
+	policy: EncryptionPolicy,
+): boolean {
+	if (selected !== MSE_CRYPTO_PLAINTEXT && selected !== MSE_CRYPTO_RC4) {
+		return false;
+	}
+	if ((selected & cryptoProvide) !== selected) return false;
+	if (policy === "required") return selected === MSE_CRYPTO_RC4;
+	return true;
 }
 
 export async function respondMseHandshake(

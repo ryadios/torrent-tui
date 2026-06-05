@@ -128,6 +128,8 @@ export class PeerConnection extends EventEmitter {
 				this.socket = null;
 				this.handshakeDone = false;
 				this.handshakeBuffer = new Uint8Array(0);
+				this.decryptStream = null;
+				this.encryptStream = null;
 				await this.connectAttempt(false);
 				return;
 			}
