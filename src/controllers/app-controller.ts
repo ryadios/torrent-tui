@@ -220,7 +220,10 @@ export class AppController {
 	private handleKeyPress(key: KeyEvent): void {
 		if (this.focusMode === "dialog") {
 			if (this._confirmDialog?.getIsOpen()) {
-				this._confirmDialog.handleInput(key.name);
+				if (this._confirmDialog.handleInput(key.name)) {
+					key.preventDefault();
+					key.stopPropagation();
+				}
 			} else {
 				if (key.name === "escape") {
 					this.focusMode = "global";
