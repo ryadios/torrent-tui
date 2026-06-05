@@ -11,6 +11,8 @@ import type { AppSettings } from "../config/settings";
 import { getConfigDir, getDataDir, resolvePath } from "../utils/paths";
 import type { PeerInfo } from "./types";
 
+const BLOCKLIST_FETCH_TIMEOUT_MS = 7_500;
+
 interface IpRange {
 	start: number;
 	end: number;
@@ -88,14 +90,28 @@ async function loadUrlBlocklist(settings: AppSettings): Promise<string> {
 		const ageMs = Date.now() - statSync(cachePath).mtimeMs;
 		if (ageMs < refreshMs) return readFileSync(cachePath, "utf-8");
 	}
-	const response = await fetch(settings.blocklistUrl);
-	if (!response.ok) {
+	const controller = new AbortController();
+	const timeout = setTimeout(
+		() => controller.abort(),
+		BLOCKLIST_FETCH_TIMEOUT_MS,
+	);
+	try {
+		const response = await fetch(settings.blocklistUrl, {
+			signal: controller.signal,
+		});
+		if (!response.ok) {
+			if (existsSync(cachePath)) return readFileSync(cachePath, "utf-8");
+			return "";
+		}
+		const content = await response.text();
+		writeFileSync(cachePath, content);
+		return content;
+	} catch {
 		if (existsSync(cachePath)) return readFileSync(cachePath, "utf-8");
 		return "";
+	} finally {
+		clearTimeout(timeout);
 	}
-	const content = await response.text();
-	writeFileSync(cachePath, content);
-	return content;
 }
 
 function safeCacheName(url: string): string {

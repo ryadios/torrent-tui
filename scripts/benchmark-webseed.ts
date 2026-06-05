@@ -147,8 +147,14 @@ function parseArg(prefix: string, fallback: number): number {
 	return fallback;
 }
 
-async function waitFor(fn: () => boolean): Promise<void> {
-	while (!fn()) await new Promise((resolve) => setTimeout(resolve, 5));
+async function waitFor(fn: () => boolean, timeoutMs = 30_000): Promise<void> {
+	const started = Date.now();
+	while (!fn()) {
+		if (Date.now() - started > timeoutMs) {
+			throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
 }
 
 function formatBytes(bytes: number): string {

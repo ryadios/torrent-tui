@@ -4,7 +4,7 @@ import { type AppSettings, DEFAULT_SETTINGS } from "../config/settings";
 import type { Store, TorrentPeerState, TorrentState } from "../store";
 import { writeJsonAtomic } from "../utils/json";
 import { getDataDir, resolvePath } from "../utils/paths";
-import { loadBlocklist } from "./blocklist";
+import { type Blocklist, loadBlocklist } from "./blocklist";
 import { DiscoveryCoordinator } from "./discovery/coordinator";
 import type { Downloader } from "./downloader";
 import { parseMagnetUri } from "./magnet";
@@ -649,6 +649,19 @@ export class TorrentBridge {
 		const entry = this.torrents.get(id);
 		if (!entry) return;
 
+		let blocklist: Blocklist;
+		try {
+			blocklist = await loadBlocklist(this.config);
+		} catch {
+			this.updateEntry(id, {
+				status: "error",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
+			return;
+		}
+
 		const session = new TorrentSession(metadata, this.downloadPath);
 		entry.session = session;
 		entry.hasTransferActivity = false;
@@ -735,7 +748,6 @@ export class TorrentBridge {
 			etaSeconds: null,
 		});
 
-		const blocklist = await loadBlocklist(this.config);
 		const manager = new PeerManager(metadata, this.config.maxConnections, {
 			blocklist,
 			encryptionPolicy: this.config.encryption,

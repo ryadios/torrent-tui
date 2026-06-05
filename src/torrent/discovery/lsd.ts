@@ -39,12 +39,16 @@ export class LsdService {
 				Buffer.from(this.metadata.infoHash).toString("hex")
 			)
 				return;
-			this.onPeer({ ip: announce.host || remote.address, port: announce.port });
+			this.onPeer({ ip: remote.address, port: announce.port });
 		});
 		await new Promise<void>((resolve, reject) => {
-			socket.once("error", reject);
+			let binding = true;
+			const onError = (err: Error): void => {
+				if (binding) reject(err);
+			};
+			socket.on("error", onError);
 			socket.bind(this.multicastPort, () => {
-				socket.off("error", reject);
+				binding = false;
 				try {
 					socket.addMembership(this.multicastAddress);
 				} catch {
