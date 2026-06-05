@@ -11,12 +11,14 @@ import {
 	writeResumeData,
 } from "./resume.ts";
 import type { StorageManager } from "./storage.ts";
+import type { FileInfo } from "./types.ts";
 
 const BLOCK_SIZE = 16_384;
 const PIPELINE_DEPTH = 15;
 const CORRUPT_STRIKE_LIMIT = 2;
 const DEFAULT_MAX_UPLOAD_QUEUE_PER_PEER = 32;
 const DEFAULT_MAX_UPLOAD_QUEUE_GLOBAL = 512;
+const DEFAULT_WEB_SEED_TIMEOUT_MS = 10_000;
 
 type WebSeedFetch = (
 	input: string | URL | Request,
@@ -33,6 +35,7 @@ export interface DownloaderOptions {
 	maxWebSeedConnections?: number;
 	webSeedMaxRequestBytes?: number;
 	webSeedFetch?: WebSeedFetch;
+	webSeedTimeoutMs?: number;
 }
 
 interface UploadRequest {
@@ -89,6 +92,7 @@ export class Downloader extends EventEmitter {
 	private maxWebSeedConnections: number;
 	private webSeedMaxRequestBytes: number;
 	private webSeedFetch: WebSeedFetch;
+	private webSeedTimeoutMs: number;
 
 	constructor(
 		private metadata: TorrentMetadata,
@@ -114,6 +118,8 @@ export class Downloader extends EventEmitter {
 		this.maxWebSeedConnections = options.maxWebSeedConnections ?? 0;
 		this.webSeedMaxRequestBytes = options.webSeedMaxRequestBytes ?? 16_777_216;
 		this.webSeedFetch = options.webSeedFetch ?? fetch;
+		this.webSeedTimeoutMs =
+			options.webSeedTimeoutMs ?? DEFAULT_WEB_SEED_TIMEOUT_MS;
 	}
 
 	start(): void {
@@ -144,6 +150,7 @@ export class Downloader extends EventEmitter {
 			this.downloadTokens = refillTokens(
 				this.downloadTokens,
 				this.downloadLimitBps,
+				this.webSeedMaxRequestBytes,
 			);
 			this.uploadTokens = refillTokens(this.uploadTokens, this.uploadLimitBps);
 			this.drainUploadQueue();
@@ -736,28 +743,63 @@ export class Downloader extends EventEmitter {
 		seed: string,
 		pieceIndex: number,
 	): Promise<Uint8Array> {
-		const start = pieceIndex * this.metadata.pieceLength;
-		const length = this.pieceLength(pieceIndex);
-		const end = start + length - 1;
+		const ranges = this.metadata.pieceToFileRanges(pieceIndex);
+		const parts: Uint8Array[] = [];
+		for (const { file, fileOffset, length } of ranges) {
+			if (file.padding) {
+				parts.push(new Uint8Array(length));
+				continue;
+			}
+			parts.push(await this.fetchWebSeedRange(seed, file, fileOffset, length));
+		}
+		return concatBytes(parts);
+	}
+
+	private async fetchWebSeedRange(
+		seed: string,
+		file: FileInfo,
+		fileOffset: number,
+		length: number,
+	): Promise<Uint8Array> {
+		const end = fileOffset + length - 1;
 		await this.waitForDownloadTokens(length);
-		const response = await this.webSeedFetch(this.webSeedUrl(seed), {
-			headers: { Range: `bytes=${start}-${end}` },
+		const controller = new AbortController();
+		let timeout: ReturnType<typeof setTimeout> | null = null;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timeout = setTimeout(() => {
+				controller.abort();
+				reject(
+					new Error(`webseed fetch timed out after ${this.webSeedTimeoutMs}ms`),
+				);
+			}, this.webSeedTimeoutMs);
 		});
-		if (!response.ok && response.status !== 206) {
+		let response: Response;
+		try {
+			response = await Promise.race([
+				this.webSeedFetch(this.webSeedUrl(seed, file), {
+					signal: controller.signal,
+					headers: { Range: `bytes=${fileOffset}-${end}` },
+				}),
+				timeoutPromise,
+			]);
+		} finally {
+			if (timeout) clearTimeout(timeout);
+		}
+		if (response.status !== 206) {
 			throw new Error(`webseed failed ${response.status}`);
 		}
 		const data = new Uint8Array(await response.arrayBuffer());
 		if (data.length !== length) throw new Error("webseed short read");
-		if (this.downloadLimitBps > 0) this.downloadTokens -= length;
+		if (this.downloadLimitBps > 0) this.downloadTokens -= data.length;
 		return data;
 	}
 
-	private webSeedUrl(seed: string): string {
+	private webSeedUrl(seed: string, file: FileInfo): string {
 		if (!this.metadata.isMultiFile) return seed;
 		const rootPrefix = `${this.metadata.name}/`;
-		const path = this.metadata.files[0]?.path.startsWith(rootPrefix)
-			? this.metadata.files[0].path.slice(rootPrefix.length)
-			: "";
+		const path = file.path.startsWith(rootPrefix)
+			? file.path.slice(rootPrefix.length)
+			: file.path;
 		return path ? `${seed.replace(/\/$/, "")}/${encodeURI(path)}` : seed;
 	}
 
@@ -791,10 +833,7 @@ export class Downloader extends EventEmitter {
 
 	private async waitForDownloadTokens(length: number): Promise<void> {
 		if (this.downloadLimitBps <= 0) return;
-		while (
-			!this.stopped &&
-			this.downloadTokens < Math.min(BLOCK_SIZE, length)
-		) {
+		while (!this.stopped && this.downloadTokens < length) {
 			await delay(100);
 		}
 	}
@@ -813,10 +852,25 @@ function bufEqual(a: Uint8Array, b: Uint8Array): boolean {
 	return true;
 }
 
-function refillTokens(current: number, limitBps: number): number {
+function refillTokens(
+	current: number,
+	limitBps: number,
+	maxBurstBytes = BLOCK_SIZE,
+): number {
 	if (limitBps <= 0) return Infinity;
-	const capacity = Math.max(BLOCK_SIZE, limitBps);
+	const capacity = Math.max(BLOCK_SIZE, limitBps, maxBurstBytes);
 	return Math.min(capacity, current + limitBps);
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+	const total = parts.reduce((sum, part) => sum + part.length, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const part of parts) {
+		out.set(part, offset);
+		offset += part.length;
+	}
+	return out;
 }
 
 function delay(ms: number): Promise<void> {
