@@ -75,7 +75,8 @@ export class StorageManager {
 		let createdFiles = 0;
 		let existingFiles = 0;
 
-		for (const file of this.metadata.files) {
+		for (const file of this.metadata.storageFiles) {
+			if (file.padding) continue;
 			const fullPath = join(this.downloadPath, file.path);
 			const dir = dirname(fullPath);
 			if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -97,7 +98,9 @@ export class StorageManager {
 		return {
 			createdFiles,
 			existingFiles,
-			allFilesCreated: this.metadata.files.length > 0 && existingFiles === 0,
+			allFilesCreated:
+				this.metadata.storageFiles.some((file) => !file.padding) &&
+				existingFiles === 0,
 		};
 	}
 
@@ -124,6 +127,11 @@ export class StorageManager {
 		let written = 0;
 
 		for (const { file, fileOffset, length } of ranges) {
+			if (file.padding) {
+				result.fill(0, written, written + length);
+				written += length;
+				continue;
+			}
 			const fullPath = join(this.downloadPath, file.path);
 			if (!existsSync(fullPath)) {
 				if (tolerateMissing) return null;
@@ -156,6 +164,10 @@ export class StorageManager {
 		let offset = 0;
 
 		for (const { file, fileOffset, length } of ranges) {
+			if (file.padding) {
+				offset += length;
+				continue;
+			}
 			const fullPath = join(this.downloadPath, file.path);
 			const fd = openSync(fullPath, "r+");
 			try {
@@ -182,7 +194,7 @@ export class StorageManager {
 
 		const data = this.readPieceMaybeSync(pieceIndex, true);
 		if (!data) return false;
-		if (isAllZero(data)) return false;
+		if (isAllZero(data) && !this.isPaddingOnlyPiece(pieceIndex)) return false;
 
 		const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
 		return bufEqual(actual, expected);
@@ -333,7 +345,9 @@ export class StorageManager {
 			tolerateMissing,
 			readHandles,
 		);
-		if (!data || isAllZero(data)) return "missing";
+		if (!data) return "missing";
+		if (isAllZero(data) && !this.isPaddingOnlyPiece(pieceIndex))
+			return "missing";
 
 		const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
 		return bufEqual(actual, expected) ? "valid" : "corrupt";
@@ -356,6 +370,17 @@ export class StorageManager {
 		for (const { file, fileOffset, length } of this.metadata.pieceToFileRanges(
 			pieceIndex,
 		)) {
+			if (file.padding) {
+				let remaining = length;
+				while (remaining > 0) {
+					throwIfAborted(signal);
+					const chunkLength = Math.min(remaining, chunkSizeBytes);
+					hash.update(Buffer.alloc(chunkLength));
+					remaining -= chunkLength;
+					await maybeYield();
+				}
+				continue;
+			}
 			const fullPath = join(this.downloadPath, file.path);
 			const handle = await this.getAsyncReadHandle(
 				fullPath,
@@ -385,7 +410,7 @@ export class StorageManager {
 			}
 		}
 
-		if (!sawNonZero) return "missing";
+		if (!sawNonZero && !this.isPaddingOnlyPiece(pieceIndex)) return "missing";
 
 		const actual = hash.digest() as unknown as Uint8Array;
 		return bufEqual(actual, expected) ? "valid" : "corrupt";
@@ -429,6 +454,11 @@ export class StorageManager {
 		return isLastPiece
 			? this.metadata.totalSize - pieceIndex * this.metadata.pieceLength
 			: this.metadata.pieceLength;
+	}
+
+	private isPaddingOnlyPiece(pieceIndex: number): boolean {
+		const ranges = this.metadata.pieceToFileRanges(pieceIndex);
+		return ranges.length > 0 && ranges.every(({ file }) => file.padding);
 	}
 }
 

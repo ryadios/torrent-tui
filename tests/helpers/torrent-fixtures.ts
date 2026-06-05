@@ -32,6 +32,7 @@ export function singleFileTorrentFixture(
 		announceList?: string[][];
 		nodes?: Array<[string, number]>;
 		private?: boolean;
+		webSeeds?: string[];
 	} = {},
 ): TorrentFixture {
 	const name = options.name ?? "sample.bin";
@@ -52,8 +53,10 @@ export function multiFileTorrentFixture(
 	options: {
 		name?: string;
 		files?: Array<{ path: string[]; content: Uint8Array }>;
+		paddingFiles?: Array<{ path: string[]; length: number }>;
 		pieceLength?: number;
 		announce?: string;
+		webSeeds?: string[];
 	} = {},
 ): TorrentFixture {
 	const name = options.name ?? "album";
@@ -62,13 +65,24 @@ export function multiFileTorrentFixture(
 		{ path: ["disc1", "b.txt"], content: bytes("defgh") },
 		{ path: ["c.txt"], content: bytes("ijkl") },
 	];
-	const content = concatBytes(files.map((file) => file.content));
+	const paddingFiles = options.paddingFiles ?? [];
+	const content = concatBytes([
+		...files.map((file) => file.content),
+		...paddingFiles.map((file) => new Uint8Array(file.length)),
+	]);
 	const pieceLength = options.pieceLength ?? 5;
 	const info: { [key: string]: BencodeValue } = {
-		files: files.map((file) => ({
-			length: file.content.length,
-			path: file.path,
-		})),
+		files: [
+			...files.map((file) => ({
+				length: file.content.length,
+				path: file.path,
+			})),
+			...paddingFiles.map((file) => ({
+				attr: "p",
+				length: file.length,
+				path: file.path,
+			})),
+		],
 		name,
 		"piece length": pieceLength,
 		pieces: pieceHashBytes(content, pieceLength),
@@ -85,6 +99,7 @@ function buildTorrentDictionary(
 		announceList?: string[][];
 		nodes?: Array<[string, number]>;
 		private?: boolean;
+		webSeeds?: string[];
 	},
 ): { [key: string]: BencodeValue } {
 	const torrent: { [key: string]: BencodeValue } = {
@@ -99,6 +114,13 @@ function buildTorrentDictionary(
 	}
 	if (options.private) {
 		info.private = 1;
+	}
+	if (options.webSeeds) {
+		if (options.webSeeds.length === 1 && options.webSeeds[0]) {
+			torrent["url-list"] = options.webSeeds[0];
+		} else {
+			torrent["url-list"] = options.webSeeds;
+		}
 	}
 	return torrent;
 }

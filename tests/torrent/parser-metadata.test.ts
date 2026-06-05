@@ -144,6 +144,37 @@ describe("TorrentMetadata", () => {
 		expect(metadata.nodes).toEqual([{ ip: "127.0.0.1", port: 6881 }]);
 	});
 
+	test("parses BEP 19 web seed url-list entries", () => {
+		const { metadata } = singleFileTorrentFixture({
+			webSeeds: [
+				"https://seed.example/files/sample.bin",
+				"http://mirror.example/files/sample.bin",
+			],
+		});
+
+		expect(metadata.webSeeds).toEqual([
+			"https://seed.example/files/sample.bin",
+			"http://mirror.example/files/sample.bin",
+		]);
+	});
+
+	test("hides BEP 47 padding files from payload files", () => {
+		const { metadata } = multiFileTorrentFixture({
+			files: [{ path: ["movie.mkv"], content: bytes("payload") }],
+			paddingFiles: [{ path: [".pad", "7"], length: 7 }],
+			pieceLength: 7,
+		});
+
+		expect(metadata.isMultiFile).toBe(true);
+		expect(metadata.files).toEqual([
+			{ path: "album/movie.mkv", length: 7, offset: 0 },
+		]);
+		expect(metadata.storageFiles).toEqual([
+			{ path: "album/movie.mkv", length: 7, offset: 0 },
+			{ path: "album/.pad/7", length: 7, offset: 7, padding: true },
+		]);
+	});
+
 	test("throws on invalid metadata", () => {
 		const fixture = singleFileTorrentFixture();
 		const decoded = decode(fixture.raw) as { [key: string]: BencodeValue };

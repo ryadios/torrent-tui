@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Store } from "../../src/store/index.ts";
 import {
@@ -137,6 +137,28 @@ describe("StorageManager", () => {
 
 			expect(summary).toEqual({ valid: 0, missing: 2, corrupt: 1 });
 			expect(storage.downloadedCount).toBe(0);
+		});
+	});
+
+	test("synthesizes BEP 47 padding bytes without creating padding files", async () => {
+		await withTempDir(async (dir) => {
+			const fixture = multiFileTorrentFixture({
+				files: [{ path: ["payload.bin"], content: patternedBytes(7) }],
+				paddingFiles: [{ path: [".pad", "7"], length: 7 }],
+				pieceLength: 7,
+			});
+			const storage = new StorageManager(fixture.metadata, dir);
+
+			const setup = await storage.setup();
+			storage.writePieceSync(0, patternedBytes(7));
+			const summary = await storage.verifyAll({ tolerateMissing: true });
+
+			expect(setup.createdFiles).toBe(1);
+			expect(
+				existsSync(join(dir, fixture.metadata.storageFiles[1]?.path ?? "")),
+			).toBe(false);
+			expect(Buffer.from(storage.readPieceSync(1))).toEqual(Buffer.alloc(7));
+			expect(summary).toEqual({ valid: 2, missing: 0, corrupt: 0 });
 		});
 	});
 });
