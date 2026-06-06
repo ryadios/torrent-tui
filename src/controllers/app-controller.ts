@@ -9,11 +9,12 @@ import {
 import { buildSidebarSelectableItems, type Sidebar } from "../layout/sidebar";
 import type { StatusBar } from "../layout/status-bar";
 import type { ToastManager } from "../layout/toast-manager";
-import type { Store } from "../store";
+import type { AppState, Store } from "../store";
 import { filterTorrents } from "../utils/filter";
 
 type FocusMode = "global" | "dialog" | "search";
 const DETAIL_TABS: DetailTab[] = ["Pieces", "Peers", "Files"];
+const RENDER_THROTTLE_MS = 100;
 
 export class AppController {
 	private renderer: CliRenderer;
@@ -34,6 +35,8 @@ export class AppController {
 	private lastDetailTorrentId: string | null = null;
 	private pendingDeleteId: string | null = null;
 	private filesTabCursor = 0;
+	private renderTimer: ReturnType<typeof setTimeout> | null = null;
+	private lastRenderAt = 0;
 
 	// Injected by App after bridge/dialog are created
 	onAddTorrent?: () => void;
@@ -97,24 +100,7 @@ export class AppController {
 	}
 
 	start(): void {
-		this.store.subscribe((state) => {
-			const len = this.getVisibleTorrents(state).length;
-			if (len > 0 && this.tableSelectedIndex >= len) {
-				this.tableSelectedIndex = len - 1;
-			} else if (len === 0) {
-				this.tableSelectedIndex = 0;
-			}
-			this.syncDetailState();
-			this.sidebar.update(state, this.focusArea);
-			this.contentWindow.update(
-				this.focusArea,
-				this.tableSelectedIndex,
-				this.getDetailTab(),
-				this.getDetailScrollOffset(),
-				this.filesTabCursor,
-			);
-			this.statusBar.update(state, this.focusArea, this.focusMode === "search");
-		});
+		this.store.subscribe(() => this.scheduleRender());
 
 		this.renderer.keyInput.on("keypress", (key) => {
 			this.handleKeyPress(key);
@@ -139,7 +125,33 @@ export class AppController {
 	}
 
 	private refreshView(): void {
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = null;
+		}
+		this.renderView();
+	}
+
+	private scheduleRender(): void {
+		if (this.renderTimer) return;
+		const elapsed = Date.now() - this.lastRenderAt;
+		const delay = Math.max(0, RENDER_THROTTLE_MS - elapsed);
+		this.renderTimer = setTimeout(() => {
+			this.renderTimer = null;
+			this.renderView();
+		}, delay);
+	}
+
+	private renderView(): void {
+		this.lastRenderAt = Date.now();
 		const state = this.store.getState();
+		const len = this.getVisibleTorrents(state).length;
+		if (len > 0 && this.tableSelectedIndex >= len) {
+			this.tableSelectedIndex = len - 1;
+		} else if (len === 0) {
+			this.tableSelectedIndex = 0;
+		}
+		this.syncDetailState(state);
 		this.sidebar.update(state, this.focusArea);
 		this.contentWindow.update(
 			this.focusArea,
@@ -186,7 +198,7 @@ export class AppController {
 	private moveDetailTab(delta: number): void {
 		this.detailTabIndex =
 			(this.detailTabIndex + delta + DETAIL_TABS.length) % DETAIL_TABS.length;
-		this.refreshView();
+		this.scheduleRender();
 	}
 
 	private getDetailScrollOffset(): number {
@@ -205,20 +217,20 @@ export class AppController {
 		};
 	}
 
-	private getSelectedTorrent() {
-		const state = this.store.getState();
+	private getSelectedTorrent(state = this.store.getState()) {
 		return this.getVisibleTorrents(state)[this.tableSelectedIndex] ?? null;
 	}
 
-	private syncDetailState(): void {
-		const torrentId = this.getSelectedTorrent()?.id ?? null;
+	private syncDetailState(state: AppState = this.store.getState()): void {
+		const selectedTorrent = this.getSelectedTorrent(state);
+		const torrentId = selectedTorrent?.id ?? null;
 		if (torrentId !== this.lastDetailTorrentId) {
 			this.lastDetailTorrentId = torrentId;
 			this.resetDetailScrollOffsets();
 			this.filesTabCursor = 0;
 		}
 		const maxOffset = getDetailMaxScrollOffset(
-			this.getSelectedTorrent(),
+			selectedTorrent,
 			this.getDetailTab(),
 			this.contentWindow.getDetailBodyRowCount(),
 		);
@@ -239,7 +251,7 @@ export class AppController {
 		);
 		if (nextOffset === this.getDetailScrollOffset()) return;
 		this.setDetailScrollOffset(nextOffset);
-		this.refreshView();
+		this.scheduleRender();
 	}
 
 	private handleKeyPress(key: KeyEvent): void {
@@ -253,7 +265,7 @@ export class AppController {
 			}
 			if (key.name === "return" || key.name === "enter") {
 				this.focusMode = "global";
-				this.refreshView();
+				this.scheduleRender();
 				key.preventDefault();
 				key.stopPropagation();
 				return;
@@ -302,20 +314,24 @@ export class AppController {
 
 		if (key.shift && key.name === "tab") {
 			this.focusArea = this.previousFocusArea();
-			this.refreshView();
+			this.scheduleRender();
+			key.preventDefault();
+			key.stopPropagation();
 			return;
 		}
 
 		if (key.name === "tab") {
 			this.focusArea = this.nextFocusArea();
-			this.refreshView();
+			this.scheduleRender();
+			key.preventDefault();
+			key.stopPropagation();
 			return;
 		}
 
 		if (key.name === "/") {
 			this.focusMode = "search";
 			this.focusArea = "table";
-			this.refreshView();
+			this.scheduleRender();
 			key.preventDefault();
 			key.stopPropagation();
 			return;
@@ -360,7 +376,7 @@ export class AppController {
 						this.tableSelectedIndex + 1,
 						len - 1,
 					);
-					this.refreshView();
+					this.scheduleRender();
 				}
 			} else if (this.focusArea === "details") {
 				if (this.getDetailTab() === "Files") {
@@ -382,7 +398,7 @@ export class AppController {
 			} else if (this.focusArea === "table") {
 				if (this.tableSelectedIndex > 0) {
 					this.tableSelectedIndex--;
-					this.refreshView();
+					this.scheduleRender();
 				}
 			} else if (this.focusArea === "details") {
 				if (this.getDetailTab() === "Files") {
@@ -476,7 +492,7 @@ export class AppController {
 			this.detailScrollOffsets.Files = this.filesTabCursor;
 		}
 
-		this.refreshView();
+		this.scheduleRender();
 	}
 
 	private handlePaste(event: PasteEvent): void {

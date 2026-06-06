@@ -19,6 +19,19 @@ function createNoopRenderable() {
 	};
 }
 
+function createCountingRenderable() {
+	let updateCount = 0;
+	return {
+		get updateCount() {
+			return updateCount;
+		},
+		update: () => {
+			updateCount++;
+		},
+		getDetailBodyRowCount: () => 10,
+	};
+}
+
 describe("delete confirmation controller flow", () => {
 	test("confirms delete-with-files on the first y keypress", async () => {
 		const { renderer } = await createTestRenderer({
@@ -166,6 +179,166 @@ describe("delete confirmation controller flow", () => {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			expect(manageCount).toBe(1);
+		} finally {
+			renderer.destroy();
+		}
+	});
+
+	test("coalesces repeated store updates into throttled renders", async () => {
+		const { renderer } = await createTestRenderer({
+			width: 80,
+			height: 24,
+		});
+		try {
+			const store = new Store({
+				selectedIndex: 0,
+				selectedView: "All",
+				torrents: [],
+				totalDownloadBps: 0,
+				totalUploadBps: 0,
+			});
+			const sidebar = createCountingRenderable();
+			const content = createCountingRenderable();
+			const status = createCountingRenderable();
+			const controller = new AppController(
+				renderer,
+				store,
+				sidebar as never,
+				content as never,
+				status as never,
+				{
+					handleInput: () => false,
+					show: () => {},
+				} as never,
+			);
+			controller.start();
+			const initialUpdates = content.updateCount;
+
+			for (let i = 0; i < 20; i++) {
+				store.setState({ totalDownloadBps: i });
+			}
+
+			expect(content.updateCount).toBe(initialUpdates);
+			await new Promise((resolve) => setTimeout(resolve, 120));
+
+			expect(sidebar.updateCount).toBe(initialUpdates + 1);
+			expect(content.updateCount).toBe(initialUpdates + 1);
+			expect(status.updateCount).toBe(initialUpdates + 1);
+		} finally {
+			renderer.destroy();
+		}
+	});
+
+	test("coalesces tab spam into throttled renders", async () => {
+		const { renderer } = await createTestRenderer({
+			width: 80,
+			height: 24,
+		});
+		try {
+			const store = new Store({
+				selectedIndex: 0,
+				selectedView: "All",
+				torrents: [],
+				totalDownloadBps: 0,
+				totalUploadBps: 0,
+			});
+			const sidebar = createCountingRenderable();
+			const content = createCountingRenderable();
+			const status = createCountingRenderable();
+			const controller = new AppController(
+				renderer,
+				store,
+				sidebar as never,
+				content as never,
+				status as never,
+				{
+					handleInput: () => false,
+					show: () => {},
+				} as never,
+			);
+			controller.start();
+			const initialUpdates = content.updateCount;
+			const firstKey = keyEvent("tab", false);
+
+			callHandleKeyPress(controller, firstKey);
+			for (let i = 0; i < 99; i++) {
+				callHandleKeyPress(controller, keyEvent("tab", false));
+			}
+
+			expect(firstKey.prevented).toBe(true);
+			expect(firstKey.stopped).toBe(true);
+			expect(content.updateCount).toBe(initialUpdates);
+			await new Promise((resolve) => setTimeout(resolve, 120));
+
+			expect(sidebar.updateCount).toBe(initialUpdates + 1);
+			expect(content.updateCount).toBe(initialUpdates + 1);
+			expect(status.updateCount).toBe(initialUpdates + 1);
+		} finally {
+			renderer.destroy();
+		}
+	});
+
+	test("coalesces table navigation spam into throttled renders", async () => {
+		const { renderer } = await createTestRenderer({
+			width: 80,
+			height: 24,
+		});
+		try {
+			const store = new Store({
+				selectedIndex: 0,
+				selectedView: "All",
+				torrents: Array.from({ length: 200 }, (_, i) => ({
+					id: `torrent-${i}`,
+					name: `sample-${i}`,
+					categoryId: null,
+					categoryName: null,
+					savePath: "/tmp",
+					targetPath: `/tmp/sample-${i}`,
+					totalSize: 1,
+					pieceLength: 1,
+					downloadedPieces: 0,
+					totalPieces: 1,
+					status: "stopped" as const,
+					downloadBps: 0,
+					uploadBps: 0,
+					peers: 0,
+					seeds: 0,
+					leechers: 0,
+					peerDetails: [],
+					files: [],
+					etaSeconds: null,
+				})),
+				totalDownloadBps: 0,
+				totalUploadBps: 0,
+			});
+			const sidebar = createCountingRenderable();
+			const content = createCountingRenderable();
+			const status = createCountingRenderable();
+			const controller = new AppController(
+				renderer,
+				store,
+				sidebar as never,
+				content as never,
+				status as never,
+				{
+					handleInput: () => false,
+					show: () => {},
+				} as never,
+			);
+			controller.start();
+			controller.focusArea = "table";
+			const initialUpdates = content.updateCount;
+
+			for (let i = 0; i < 100; i++) {
+				callHandleKeyPress(controller, keyEvent("j", false));
+			}
+
+			expect(content.updateCount).toBe(initialUpdates);
+			await new Promise((resolve) => setTimeout(resolve, 120));
+
+			expect(sidebar.updateCount).toBe(initialUpdates + 1);
+			expect(content.updateCount).toBe(initialUpdates + 1);
+			expect(status.updateCount).toBe(initialUpdates + 1);
 		} finally {
 			renderer.destroy();
 		}
