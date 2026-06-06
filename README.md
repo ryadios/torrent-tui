@@ -3,7 +3,6 @@
 **A terminal BitTorrent client for focused download management.** Add `.torrent` files, track active transfers, and manage sessions from a clean keyboard-driven interface.
 
 [![npm version](https://img.shields.io/npm/v/torrent-tui?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/torrent-tui)
-[![gzipped](https://img.shields.io/badge/gzipped-39%20KB-2563eb?style=for-the-badge)](https://www.npmjs.com/package/torrent-tui)
 [![npm unpacked size](https://img.shields.io/npm/unpacked-size/torrent-tui?style=for-the-badge)](https://www.npmjs.com/package/torrent-tui)
 [![CI](https://img.shields.io/github/actions/workflow/status/ryadios/torrent-tui/release.yml?branch=main&style=for-the-badge&logo=github)](https://github.com/ryadios/torrent-tui/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/torrent-tui?style=for-the-badge)](./LICENSE)
@@ -53,7 +52,7 @@ From inside the app:
 | Key | Action |
 | --- | --- |
 | `j` / `k` or arrow keys | Move selection |
-| `Tab` | Change focus |
+| `Tab` / `Shift+Tab` | Change focus |
 | `a` | Add a `.torrent` file or magnet link |
 | `/` in add dialog | Type a magnet link manually |
 | `Space` | Pause or resume the selected torrent |
@@ -61,9 +60,11 @@ From inside the app:
 | `D` | Remove the selected torrent and downloaded files |
 | `q` | Quit |
 
+The detail panel has `Pieces`, `Peers`, and `Files` tabs. Focus it with `Tab`, then use `h` / `l`, `[` / `]`, or left/right arrows to switch tabs. Multi-file torrents open a file picker before download; use `Space` to toggle a file, `a` to select all, `n` to select none, and `Enter` to confirm.
+
 ## Commands
 
-The package also exposes a few command-line checks around the same torrent engine:
+The package also exposes command-line workflows around the same torrent engine:
 
 ```bash
 torrent-tui --help
@@ -74,6 +75,9 @@ torrent-tui file.torrent --verify
 torrent-tui file.torrent --handshake
 torrent-tui file.torrent --download
 torrent-tui 'magnet:?xt=urn:btih:...' --download
+torrent-tui file.torrent --info
+torrent-tui file.torrent --info --json
+torrent-tui 'magnet:?xt=urn:btih:...' --info
 ```
 
 | Command | Description |
@@ -81,12 +85,15 @@ torrent-tui 'magnet:?xt=urn:btih:...' --download
 | `torrent-tui` | Start the terminal UI. |
 | `torrent-tui <file.torrent>` | Start the TUI and add the torrent. |
 | `torrent-tui <magnet-uri>` | Start the TUI, fetch magnet metadata, cache it, and start the torrent. |
-| `torrent-tui <file.torrent> --verify` | Create storage and verify local pieces. |
+| `torrent-tui <file.torrent> --verify` | Create storage, verify local pieces, and print a tracker summary. |
 | `torrent-tui <file.torrent> --handshake` | Connect to peers and print a connection summary. |
 | `torrent-tui <file.torrent> --download` | Run the downloader without launching the TUI. |
 | `torrent-tui <magnet-uri> --download` | Fetch magnet metadata, cache it, then run the downloader without launching the TUI. |
+| `torrent-tui <file.torrent> --info` | Print torrent metadata without launching the TUI. |
+| `torrent-tui <file.torrent> --info --json` | Print torrent metadata as machine-readable JSON. |
+| `torrent-tui <magnet-uri> --info` | Print cached magnet metadata without launching the TUI. |
 
-Magnet support covers BitTorrent v1 `btih` magnets with trackers (`tr`), explicit peers (`x.pe`), or DHT-discovered peers. After metadata is cached, `--verify` and `--handshake` can use the same magnet URI.
+Magnet support covers BitTorrent v1 `btih` magnets with trackers (`tr`), explicit peers (`x.pe`), or DHT-discovered peers. After metadata is cached, `--verify`, `--handshake`, and `--info` can use the same magnet URI.
 
 ## Configuration
 
@@ -102,7 +109,18 @@ Default settings:
 {
 	"downloadPath": "~/Downloads",
 	"maxConnections": 50,
-	"torrentFolder": "~/Downloads"
+	"torrentFolder": "~/Downloads",
+	"downloadRateLimitBps": 0,
+	"uploadRateLimitBps": 0,
+	"enableWebSeeds": true,
+	"maxWebSeedConnections": 3,
+	"webSeedMaxRequestBytes": 16777216,
+	"blocklistEnabled": false,
+	"blocklistPaths": [],
+	"blocklistUrl": "",
+	"blocklistRefreshHours": 168,
+	"encryption": "preferred",
+	"enableLsd": true
 }
 ```
 
@@ -135,6 +153,7 @@ The TUI shows detailed per-torrent states while keeping the sidebar filters simp
 | `Paused` | The active downloader was paused by the user. |
 | `Seeding` | All pieces are present and the torrent can upload to peers. |
 | `Stopped` | The torrent is saved in the session but not running. |
+| `Missing` | Previously tracked files are missing from disk after restore or recheck. |
 | `Error` | Startup, storage, or torrent metadata handling failed. |
 
 The `Downloading` sidebar filter includes queued, checking, connecting, downloading, and stalled torrents so active work stays grouped together.
@@ -146,12 +165,26 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 | `downloadPath` | Where torrent payload files are written and verified. | On torrent add, resume, verify, and startup restore. |
 | `torrentFolder` | Folder shown by the add-torrent dialog. | When you open the add dialog. |
 | `maxConnections` | Maximum number of peers the client will connect to per torrent. | During peer discovery and download. |
+| `downloadRateLimitBps` | Download speed cap in bytes per second. `0` means unlimited. | During downloads. |
+| `uploadRateLimitBps` | Upload speed cap in bytes per second. `0` means unlimited. | During uploads to peers. |
+| `enableWebSeeds` | Enables BEP 19 HTTP web seed downloads. | For torrents with `url-list` web seeds. |
+| `maxWebSeedConnections` | Maximum concurrent web seed workers. | During web seed downloads. |
+| `webSeedMaxRequestBytes` | Largest HTTP range request sent to a web seed. | During web seed downloads. |
+| `blocklistEnabled` | Enables peer blocklist filtering. | Before peer connections are accepted or opened. |
+| `blocklistPaths` | Local blocklist files to load. | When blocklists are enabled. |
+| `blocklistUrl` | Optional remote blocklist URL to cache and load. | When blocklists are enabled. |
+| `blocklistRefreshHours` | Remote blocklist cache refresh interval. | When `blocklistUrl` is configured. |
+| `encryption` | Peer encryption policy: `allowed`, `preferred`, or `required`. | During peer connection setup. |
+| `enableLsd` | Enables local peer discovery on the LAN. | For non-private torrents. |
 
 ### Tuning Tips
 
 - Use a fast local SSD for `downloadPath` if you want quicker verification and fewer stalls on reopen.
 - Point `torrentFolder` at the directory where you keep `.torrent` files so adding torrents is faster.
 - Lower `maxConnections` if your network or CPU struggles with many peers; raise it if you want more parallel peer selection.
+- Use `downloadRateLimitBps` and `uploadRateLimitBps` when you need bandwidth caps.
+- Set `encryption` to `required` only if you want to reject plaintext peers.
+- Enable blocklists only with lists you trust; malformed or unreachable lists are ignored or fall back to cached data.
 - Fresh torrents skip full zero-file verification. Existing files are checked cooperatively, so the TUI should stay responsive during large rechecks.
 - If a torrent stays `Stalled`, the client did not find a usable peer. Try again later with `Space`, or check tracker availability.
 - Settings are read when the app starts. If you edit `settings.json` manually, restart the app to pick up the changes.
@@ -160,7 +193,7 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 
 ## Status
 
-`0.0.1` is a basic release intended for early CLI usage.
+`torrent-tui` is an early Bun-first torrent client with a TUI and CLI inspection workflows.
 
 | Area | Status |
 | --- | --- |
@@ -170,7 +203,15 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 | Resume data | Available |
 | Multi-torrent TUI | Available |
 | Magnet links | Available for v1 magnets with tracker, explicit-peer, or DHT discovery |
-| Peer discovery | Trackers, DHT, and PEX |
+| Detail panel | Pieces, peers, and files tabs |
+| File selection | Available for multi-file torrents before download |
+| Engine controls | Download/upload rate limits and max peer connections |
+| Peer discovery | Trackers, DHT, PEX, and LSD |
+| Web seeds | BEP 19 HTTP web seeds |
+| Peer filtering | Local or cached remote blocklists |
+| Protocol encryption | MSE/PE with allowed, preferred, or required policy |
+| Padding files | BEP 47 padding files are hidden from payload file lists |
+| CLI inspection | `--info`, `--info --json`, and man page packaging |
 | Standalone binaries | Not included yet |
 
 ## Development
@@ -184,7 +225,9 @@ Before opening a PR:
 
 ```bash
 bun run typecheck
-bun publish --dry-run
+bun test
+bun run smoke
+npm publish --dry-run
 ```
 
 For formatting and lint fixes:
@@ -197,12 +240,14 @@ bun run check:fix
 
 Releases are published from GitHub Actions with generated GitHub release notes.
 
-1. Update `package.json` and `src/constants/index.ts` to the new version.
+1. Update `package.json` to the new version.
 2. Run local checks:
 
    ```bash
    bun run typecheck
-   bun publish --dry-run
+   bun test
+   bun run smoke
+   npm publish --dry-run
    ```
 
 3. Commit and push the version change.

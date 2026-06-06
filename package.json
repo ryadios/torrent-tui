@@ -9,8 +9,12 @@
 	"bin": {
 		"torrent-tui": "bin/torrent-tui"
 	},
+	"man": [
+		"man/torrent-tui.1"
+	],
 	"files": [
 		"bin",
+		"man",
 		"src",
 		"README.md",
 		"LICENSE"
@@ -18,7 +22,7 @@
 	"scripts": {
 		"start": "bun src/index.ts",
 		"dev": "bun --watch src/index.ts",
-		"check": "bun src/index.ts --download",
+		"check": "bun run typecheck && bun test",
 		"smoke": "bin/torrent-tui --help && bin/torrent-tui --version && if bin/torrent-tui nope.txt; then echo \"Expected invalid torrent path to fail\"; exit 1; fi",
 		"bench:startup": "bun scripts/benchmark-startup.ts",
 		"bench:webseed": "bun scripts/benchmark-webseed.ts",
@@ -27,7 +31,7 @@
 		"test:watch": "bun test --watch",
 		"typecheck": "tsc --noEmit",
 		"check:fix": "biome check --write --unsafe",
-		"release:check": "bun run typecheck && bun test && bun publish --dry-run"
+		"release:check": "bun run typecheck && bun test && bun run smoke && npm publish --dry-run"
 	},
 	"keywords": [
 		"bittorrent",

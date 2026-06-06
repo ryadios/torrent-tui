@@ -1,0 +1,61 @@
+.TH TORRENT-TUI 1
+.SH NAME
+torrent-tui \- Bun-powered terminal BitTorrent client
+.SH SYNOPSIS
+.B torrent-tui
+[\fIfile.torrent\fR|\fImagnet-uri\fR]
+[\fB--verify\fR|\fB--handshake\fR|\fB--download\fR|\fB--info\fR]
+[\fB--json\fR]
+.SH DESCRIPTION
+.B torrent-tui
+starts a terminal BitTorrent client for adding, inspecting, and managing torrents.
+It can also run selected torrent engine workflows directly from the command line.
+.SH OPTIONS
+.TP
+.B --help, -h
+Show command help.
+.TP
+.B --version, -v
+Print the package version.
+.TP
+.B --verify
+Verify local pieces for a torrent and print a tracker summary.
+.TP
+.B --handshake
+Contact trackers, connect to peers, and print a handshake summary.
+.TP
+.B --download
+Download a torrent without starting the terminal UI.
+.TP
+.B --info
+Print torrent metadata without starting the terminal UI.
+.TP
+.B --json
+Print machine-readable JSON for
+.BR --info .
+.SH COMMANDS
+.TP
+.B torrent-tui
+Start the terminal UI.
+.TP
+.B torrent-tui file.torrent
+Start the terminal UI and add a torrent.
+.TP
+.B torrent-tui magnet-uri
+Start the terminal UI and fetch magnet metadata.
+.TP
+.B torrent-tui file.torrent --info
+Print a framed metadata summary with padded lowercase labels, matching other
+command summary output.
+.TP
+.B torrent-tui file.torrent --info --json
+Print the same metadata as pretty JSON for scripts.
+.SH FILES
+.TP
+.I ${XDG_CONFIG_HOME:-~/.config}/torrent-tui/settings.json
+User settings.
+.TP
+.I ${XDG_DATA_HOME:-~/.local/share}/torrent-tui/session.json
+Session registry restored by the TUI.
+.SH SEE ALSO
+.BR bun (1)
