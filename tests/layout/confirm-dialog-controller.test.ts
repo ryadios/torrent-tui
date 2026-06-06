@@ -38,6 +38,7 @@ describe("delete confirmation controller flow", () => {
 			width: 80,
 			height: 24,
 		});
+		let controller: AppController | null = null;
 		try {
 			const store = new Store({
 				selectedIndex: 0,
@@ -68,7 +69,7 @@ describe("delete confirmation controller flow", () => {
 				totalDownloadBps: 0,
 				totalUploadBps: 0,
 			});
-			const controller = new AppController(
+			controller = new AppController(
 				renderer,
 				store,
 				createNoopRenderable() as never,
@@ -98,6 +99,7 @@ describe("delete confirmation controller flow", () => {
 			expect(confirmKey.stopped).toBe(true);
 			expect(controller.focusMode).toBe("global");
 		} finally {
+			controller?.stop();
 			renderer.destroy();
 		}
 	});
@@ -189,6 +191,7 @@ describe("delete confirmation controller flow", () => {
 			width: 80,
 			height: 24,
 		});
+		let controller: AppController | null = null;
 		try {
 			const store = new Store({
 				selectedIndex: 0,
@@ -200,7 +203,7 @@ describe("delete confirmation controller flow", () => {
 			const sidebar = createCountingRenderable();
 			const content = createCountingRenderable();
 			const status = createCountingRenderable();
-			const controller = new AppController(
+			controller = new AppController(
 				renderer,
 				store,
 				sidebar as never,
@@ -225,6 +228,7 @@ describe("delete confirmation controller flow", () => {
 			expect(content.updateCount).toBe(initialUpdates + 1);
 			expect(status.updateCount).toBe(initialUpdates + 1);
 		} finally {
+			controller?.stop();
 			renderer.destroy();
 		}
 	});
@@ -234,6 +238,7 @@ describe("delete confirmation controller flow", () => {
 			width: 80,
 			height: 24,
 		});
+		let controller: AppController | null = null;
 		try {
 			const store = new Store({
 				selectedIndex: 0,
@@ -245,7 +250,7 @@ describe("delete confirmation controller flow", () => {
 			const sidebar = createCountingRenderable();
 			const content = createCountingRenderable();
 			const status = createCountingRenderable();
-			const controller = new AppController(
+			controller = new AppController(
 				renderer,
 				store,
 				sidebar as never,
@@ -274,6 +279,7 @@ describe("delete confirmation controller flow", () => {
 			expect(content.updateCount).toBe(initialUpdates + 1);
 			expect(status.updateCount).toBe(initialUpdates + 1);
 		} finally {
+			controller?.stop();
 			renderer.destroy();
 		}
 	});
@@ -283,6 +289,7 @@ describe("delete confirmation controller flow", () => {
 			width: 80,
 			height: 24,
 		});
+		let controller: AppController | null = null;
 		try {
 			const store = new Store({
 				selectedIndex: 0,
@@ -314,7 +321,7 @@ describe("delete confirmation controller flow", () => {
 			const sidebar = createCountingRenderable();
 			const content = createCountingRenderable();
 			const status = createCountingRenderable();
-			const controller = new AppController(
+			controller = new AppController(
 				renderer,
 				store,
 				sidebar as never,
@@ -340,6 +347,7 @@ describe("delete confirmation controller flow", () => {
 			expect(content.updateCount).toBe(initialUpdates + 1);
 			expect(status.updateCount).toBe(initialUpdates + 1);
 		} finally {
+			controller?.stop();
 			renderer.destroy();
 		}
 	});
@@ -349,6 +357,7 @@ describe("delete confirmation controller flow", () => {
 			width: 80,
 			height: 24,
 		});
+		let controller: AppController | null = null;
 		try {
 			const store = new Store({
 				selectedIndex: 0,
@@ -360,7 +369,7 @@ describe("delete confirmation controller flow", () => {
 			const sidebar = createCountingRenderable();
 			const content = createCountingRenderable();
 			const status = createCountingRenderable();
-			const controller = new AppController(
+			controller = new AppController(
 				renderer,
 				store,
 				sidebar as never,
@@ -382,6 +391,7 @@ describe("delete confirmation controller flow", () => {
 			expect(content.updateCount).toBe(initialUpdates);
 			expect(status.updateCount).toBe(initialUpdates);
 		} finally {
+			controller?.stop();
 			renderer.destroy();
 		}
 	});

@@ -20,6 +20,7 @@ export class Sidebar {
 	private renderer: CliRenderer;
 	private store: Store;
 	private container: BoxRenderable;
+	private titleBox: BoxRenderable | null = null;
 	private titleText: TextRenderable | null = null;
 	private headingRows: BoxRenderable[] = [];
 	private itemTexts: SidebarItem[] = [];
@@ -61,6 +62,11 @@ export class Sidebar {
 		this.container.top = layout.sidebar.y;
 		this.container.width = layout.sidebar.width;
 		this.container.height = layout.sidebar.height;
+		if (this.titleBox) {
+			this.titleBox.left = 0;
+			this.titleBox.top = 0;
+			this.titleBox.width = layout.sidebar.width;
+		}
 		this.positionRows();
 	}
 
@@ -76,7 +82,7 @@ export class Sidebar {
 			borderColor: theme.border,
 		});
 
-		const titleBox = new BoxRenderable(this.renderer, {
+		this.titleBox = new BoxRenderable(this.renderer, {
 			position: "absolute",
 			left: 0,
 			top: 0,
@@ -89,8 +95,8 @@ export class Sidebar {
 			content: APP_NAME,
 			fg: theme.accent,
 		});
-		titleBox.add(this.titleText);
-		this.container.add(titleBox);
+		this.titleBox.add(this.titleText);
+		this.container.add(this.titleBox);
 
 		this.rebuildItems();
 
