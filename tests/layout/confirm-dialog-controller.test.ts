@@ -33,6 +33,9 @@ describe("delete confirmation controller flow", () => {
 					{
 						id: "torrent-1",
 						name: "sample",
+						categoryId: null,
+						categoryName: null,
+						savePath: "/tmp",
 						targetPath: "/tmp/sample",
 						totalSize: 1,
 						pieceLength: 1,
@@ -81,6 +84,88 @@ describe("delete confirmation controller flow", () => {
 			expect(confirmKey.prevented).toBe(true);
 			expect(confirmKey.stopped).toBe(true);
 			expect(controller.focusMode).toBe("global");
+		} finally {
+			renderer.destroy();
+		}
+	});
+
+	test("dialog escape lets the app decide whether focus returns to global", async () => {
+		const { renderer } = await createTestRenderer({
+			width: 80,
+			height: 24,
+		});
+		try {
+			const store = new Store({
+				selectedIndex: 0,
+				selectedView: "All",
+				torrents: [],
+				totalDownloadBps: 0,
+				totalUploadBps: 0,
+			});
+			const controller = new AppController(
+				renderer,
+				store,
+				createNoopRenderable() as never,
+				createNoopRenderable() as never,
+				createNoopRenderable() as never,
+				{
+					handleInput: () => false,
+					show: () => {},
+				} as never,
+			);
+			let closeCount = 0;
+			controller.focusMode = "dialog";
+			controller.onDialogClose = () => {
+				closeCount++;
+			};
+
+			const escapeKey = keyEvent("escape", false);
+			callHandleKeyPress(controller, escapeKey);
+
+			expect(closeCount).toBe(1);
+			expect(controller.focusMode).toBe("dialog");
+			expect(escapeKey.prevented).toBe(true);
+			expect(escapeKey.stopped).toBe(true);
+		} finally {
+			renderer.destroy();
+		}
+	});
+
+	test("m opens category manager only from sidebar focus", async () => {
+		const { renderer } = await createTestRenderer({
+			width: 80,
+			height: 24,
+		});
+		try {
+			const store = new Store({
+				selectedIndex: 0,
+				selectedView: "All",
+				torrents: [],
+				totalDownloadBps: 0,
+				totalUploadBps: 0,
+			});
+			const controller = new AppController(
+				renderer,
+				store,
+				createNoopRenderable() as never,
+				createNoopRenderable() as never,
+				createNoopRenderable() as never,
+				{
+					handleInput: () => false,
+					show: () => {},
+				} as never,
+			);
+			let manageCount = 0;
+			controller.onManageCategories = () => {
+				manageCount++;
+			};
+			controller.focusArea = "table";
+			callHandleKeyPress(controller, keyEvent("m", false));
+			controller.focusArea = "sidebar";
+			callHandleKeyPress(controller, keyEvent("m", false));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(manageCount).toBe(1);
 		} finally {
 			renderer.destroy();
 		}

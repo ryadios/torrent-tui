@@ -27,9 +27,18 @@ export interface TorrentPeerState {
 	uploadBps: number;
 }
 
+export interface CategoryState {
+	id: string;
+	name: string;
+	savePath: string | null;
+}
+
 export interface TorrentState {
 	id: string;
 	name: string;
+	categoryId: string | null;
+	categoryName: string | null;
+	savePath: string;
 	targetPath: string;
 	totalSize: number;
 	pieceLength: number;
@@ -49,6 +58,8 @@ export interface TorrentState {
 export interface AppState {
 	selectedIndex: number;
 	selectedView: string;
+	searchQuery: string;
+	categories: CategoryState[];
 	torrents: TorrentState[];
 	totalDownloadBps: number;
 	totalUploadBps: number;
@@ -60,8 +71,15 @@ export class Store {
 	private state: AppState;
 	private listeners: Set<Listener> = new Set();
 
-	constructor(initial: AppState) {
-		this.state = { ...initial };
+	constructor(
+		initial: Omit<AppState, "categories" | "searchQuery"> &
+			Partial<Pick<AppState, "categories" | "searchQuery">>,
+	) {
+		this.state = {
+			...initial,
+			categories: initial.categories ?? [],
+			searchQuery: initial.searchQuery ?? "",
+		};
 	}
 
 	getState(): AppState {

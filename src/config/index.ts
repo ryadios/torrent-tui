@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { log } from "../torrent/metadata";
 import { writeJsonAtomic } from "../utils/json";
 import { getConfigPath } from "../utils/paths";
+import { normalizeCategorySettings } from "./categories";
 import { type AppSettings, DEFAULT_SETTINGS, settingsSchema } from "./settings";
 
 const SETTINGS_FILE = "settings.json";
@@ -23,7 +24,7 @@ export function loadConfig(): AppSettings {
 		const result = settingsSchema.safeParse(raw);
 
 		if (result.success) {
-			return result.data;
+			return normalizeCategorySettings(result.data);
 		}
 
 		log("config", "invalid settings file — using defaults");
@@ -35,5 +36,8 @@ export function loadConfig(): AppSettings {
 }
 
 export function saveConfig(settings: AppSettings): void {
-	writeJsonAtomic(getConfigPath(SETTINGS_FILE), settings);
+	writeJsonAtomic(
+		getConfigPath(SETTINGS_FILE),
+		normalizeCategorySettings(settings),
+	);
 }

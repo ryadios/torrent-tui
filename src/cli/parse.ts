@@ -54,13 +54,17 @@ export function parseCliArgs(args: string[]): CliCommand {
 
 	const inputs = args.filter((arg) => !VALUELESS_FLAGS.has(arg));
 	if (inputs.length > 1) {
-		throw new Error(`Expected one torrent or magnet argument, got ${inputs.length}`);
+		throw new Error(
+			`Expected one torrent or magnet argument, got ${inputs.length}`,
+		);
 	}
 
 	const input = inputs[0];
 	const action = actions[0] ?? "tui";
 	if (action !== "tui" && !input) {
-		throw new Error(`Missing torrent or magnet argument for ${flagForAction(action)}`);
+		throw new Error(
+			`Missing torrent or magnet argument for ${flagForAction(action)}`,
+		);
 	}
 
 	return { action, input, json };

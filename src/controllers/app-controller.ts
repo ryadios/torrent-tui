@@ -1,5 +1,4 @@
 import type { CliRenderer, KeyEvent, PasteEvent } from "@opentui/core";
-import { SIDEBAR_ITEMS } from "../constants";
 import type { ConfirmDialog } from "../layout/confirm-dialog";
 import type { ContentWindow, FocusArea } from "../layout/content-window";
 import {
@@ -7,13 +6,13 @@ import {
 	FILE_TAB_FIXED_LINES,
 	getDetailMaxScrollOffset,
 } from "../layout/detail-panel";
-import type { Sidebar } from "../layout/sidebar";
+import { buildSidebarSelectableItems, type Sidebar } from "../layout/sidebar";
 import type { StatusBar } from "../layout/status-bar";
 import type { ToastManager } from "../layout/toast-manager";
 import type { Store } from "../store";
 import { filterTorrents } from "../utils/filter";
 
-type FocusMode = "global" | "dialog";
+type FocusMode = "global" | "dialog" | "search";
 const DETAIL_TABS: DetailTab[] = ["Pieces", "Peers", "Files"];
 
 export class AppController {
@@ -46,12 +45,23 @@ export class AppController {
 	onResumeTorrent?: (id: string) => Promise<void> | void;
 	onStartTorrent?: (id: string) => Promise<void> | void;
 	onRemoveTorrent?: (id: string, deleteFiles: boolean) => Promise<void> | void;
+	onSetTorrentCategory?: (id: string) => Promise<void> | void;
+	onManageCategories?: () => Promise<void> | void;
 
 	private _confirmDialog: ConfirmDialog | null = null;
+	private pendingConfirmAction: (() => Promise<void> | void) | null = null;
+	private pendingConfirmCancel: (() => void) | null = null;
 	set confirmDialog(dialog: ConfirmDialog) {
 		this._confirmDialog = dialog;
 		dialog.onConfirm = () => {
 			this.focusMode = "global";
+			const confirmAction = this.pendingConfirmAction;
+			if (confirmAction) {
+				this.pendingConfirmAction = null;
+				this.pendingConfirmCancel = null;
+				this.runTorrentAction("confirm action", confirmAction);
+				return;
+			}
 			const pendingDeleteId = this.pendingDeleteId;
 			if (pendingDeleteId) {
 				this.runTorrentAction("remove torrent", () =>
@@ -62,6 +72,10 @@ export class AppController {
 		};
 		dialog.onCancel = () => {
 			this.focusMode = "global";
+			const cancelAction = this.pendingConfirmCancel;
+			this.pendingConfirmAction = null;
+			this.pendingConfirmCancel = null;
+			cancelAction?.();
 			this.pendingDeleteId = null;
 		};
 	}
@@ -84,7 +98,7 @@ export class AppController {
 
 	start(): void {
 		this.store.subscribe((state) => {
-			const len = filterTorrents(state.torrents, state.selectedView).length;
+			const len = this.getVisibleTorrents(state).length;
 			if (len > 0 && this.tableSelectedIndex >= len) {
 				this.tableSelectedIndex = len - 1;
 			} else if (len === 0) {
@@ -99,7 +113,7 @@ export class AppController {
 				this.getDetailScrollOffset(),
 				this.filesTabCursor,
 			);
-			this.statusBar.update(state, this.focusArea);
+			this.statusBar.update(state, this.focusArea, this.focusMode === "search");
 		});
 
 		this.renderer.keyInput.on("keypress", (key) => {
@@ -112,6 +126,18 @@ export class AppController {
 		this.refreshView();
 	}
 
+	confirm(
+		message: string,
+		detail: string,
+		onConfirm: () => Promise<void> | void,
+		onCancel?: () => void,
+	): void {
+		this.pendingConfirmAction = onConfirm;
+		this.pendingConfirmCancel = onCancel ?? null;
+		this.focusMode = "dialog";
+		this._confirmDialog?.open(message, detail);
+	}
+
 	private refreshView(): void {
 		const state = this.store.getState();
 		this.sidebar.update(state, this.focusArea);
@@ -122,7 +148,7 @@ export class AppController {
 			this.getDetailScrollOffset(),
 			this.filesTabCursor,
 		);
-		this.statusBar.update(state, this.focusArea);
+		this.statusBar.update(state, this.focusArea, this.focusMode === "search");
 	}
 
 	private runTorrentAction(
@@ -143,11 +169,14 @@ export class AppController {
 
 	private getSelectedId(): string | null {
 		const state = this.store.getState();
-		return (
-			filterTorrents(state.torrents, state.selectedView)[
-				this.tableSelectedIndex
-			]?.id ?? null
-		);
+		return this.getVisibleTorrents(state)[this.tableSelectedIndex]?.id ?? null;
+	}
+
+	private getVisibleTorrents(state = this.store.getState()) {
+		return filterTorrents(state.torrents, {
+			view: state.selectedView,
+			searchQuery: state.searchQuery,
+		});
 	}
 
 	private getDetailTab(): DetailTab {
@@ -178,11 +207,7 @@ export class AppController {
 
 	private getSelectedTorrent() {
 		const state = this.store.getState();
-		return (
-			filterTorrents(state.torrents, state.selectedView)[
-				this.tableSelectedIndex
-			] ?? null
-		);
+		return this.getVisibleTorrents(state)[this.tableSelectedIndex] ?? null;
 	}
 
 	private syncDetailState(): void {
@@ -218,6 +243,38 @@ export class AppController {
 	}
 
 	private handleKeyPress(key: KeyEvent): void {
+		if (this.focusMode === "search") {
+			if (key.name === "escape") {
+				this.focusMode = "global";
+				this.store.setState({ searchQuery: "" });
+				key.preventDefault();
+				key.stopPropagation();
+				return;
+			}
+			if (key.name === "return" || key.name === "enter") {
+				this.focusMode = "global";
+				this.refreshView();
+				key.preventDefault();
+				key.stopPropagation();
+				return;
+			}
+			if (key.name === "backspace") {
+				const query = this.store.getState().searchQuery;
+				this.store.setState({ searchQuery: query.slice(0, -1) });
+				key.preventDefault();
+				key.stopPropagation();
+				return;
+			}
+			const char = searchCharFromKey(key);
+			if (char) {
+				const query = this.store.getState().searchQuery;
+				this.store.setState({ searchQuery: `${query}${char}` });
+				key.preventDefault();
+				key.stopPropagation();
+			}
+			return;
+		}
+
 		if (this.focusMode === "dialog") {
 			if (this._confirmDialog?.getIsOpen()) {
 				if (this._confirmDialog.handleInput(key.name)) {
@@ -226,7 +283,6 @@ export class AppController {
 				}
 			} else {
 				if (key.name === "escape") {
-					this.focusMode = "global";
 					this.onDialogClose?.();
 					key.preventDefault();
 					key.stopPropagation();
@@ -256,6 +312,15 @@ export class AppController {
 			return;
 		}
 
+		if (key.name === "/") {
+			this.focusMode = "search";
+			this.focusArea = "table";
+			this.refreshView();
+			key.preventDefault();
+			key.stopPropagation();
+			return;
+		}
+
 		if (this.focusArea === "details") {
 			if (
 				key.name === "h" ||
@@ -279,16 +344,17 @@ export class AppController {
 
 		if (key.name === "j" || key.name === "down") {
 			if (this.focusArea === "sidebar") {
-				const total = SIDEBAR_ITEMS.status.length;
 				const state = this.store.getState();
+				const total = buildSidebarSelectableItems().length;
 				const next = (state.selectedIndex + 1) % total;
+				const item = buildSidebarSelectableItems()[next];
 				this.store.setState({
 					selectedIndex: next,
-					selectedView: SIDEBAR_ITEMS.status[next] ?? "All",
+					selectedView: item?.selectedView ?? state.selectedView,
 				});
 			} else if (this.focusArea === "table") {
 				const state = this.store.getState();
-				const len = filterTorrents(state.torrents, state.selectedView).length;
+				const len = this.getVisibleTorrents(state).length;
 				if (len > 0) {
 					this.tableSelectedIndex = Math.min(
 						this.tableSelectedIndex + 1,
@@ -305,12 +371,13 @@ export class AppController {
 			}
 		} else if (key.name === "k" || key.name === "up") {
 			if (this.focusArea === "sidebar") {
-				const total = SIDEBAR_ITEMS.status.length;
 				const state = this.store.getState();
+				const total = buildSidebarSelectableItems().length;
 				const prev = (state.selectedIndex - 1 + total) % total;
+				const item = buildSidebarSelectableItems()[prev];
 				this.store.setState({
 					selectedIndex: prev,
-					selectedView: SIDEBAR_ITEMS.status[prev] ?? "All",
+					selectedView: item?.selectedView ?? state.selectedView,
 				});
 			} else if (this.focusArea === "table") {
 				if (this.tableSelectedIndex > 0) {
@@ -329,9 +396,7 @@ export class AppController {
 				const id = this.getSelectedId();
 				if (!id) return;
 				const state = this.store.getState();
-				const torrent = filterTorrents(state.torrents, state.selectedView)[
-					this.tableSelectedIndex
-				];
+				const torrent = this.getVisibleTorrents(state)[this.tableSelectedIndex];
 				if (!torrent) return;
 				if (torrent.status === "downloading") {
 					this.runTorrentAction("pause torrent", () =>
@@ -368,6 +433,20 @@ export class AppController {
 				this.focusMode = "dialog";
 				this._confirmDialog?.open("Delete torrent and files?");
 			}
+		} else if (key.name === "c") {
+			if (this.focusArea === "table") {
+				const id = this.getSelectedId();
+				if (id)
+					this.runTorrentAction("set torrent category", () =>
+						this.onSetTorrentCategory?.(id),
+					);
+			}
+		} else if (key.name === "m") {
+			if (this.focusArea === "sidebar") {
+				this.runTorrentAction("manage categories", () =>
+					this.onManageCategories?.(),
+				);
+			}
 		} else if (key.name === "a") {
 			this.focusMode = "dialog";
 			this.onAddTorrent?.();
@@ -401,6 +480,13 @@ export class AppController {
 	}
 
 	private handlePaste(event: PasteEvent): void {
+		if (this.focusMode === "search") {
+			this.store.setState({
+				searchQuery: `${this.store.getState().searchQuery}${Buffer.from(event.bytes).toString("utf-8")}`,
+			});
+			event.preventDefault();
+			return;
+		}
 		if (this.focusMode !== "dialog" || this._confirmDialog?.getIsOpen()) return;
 		if (this.onDialogPaste?.(event)) {
 			event.preventDefault();
@@ -428,4 +514,12 @@ export class AppController {
 				return "table";
 		}
 	}
+}
+
+function searchCharFromKey(key: KeyEvent): string {
+	if (key.ctrl || key.meta) return "";
+	if (key.name === "space") return " ";
+	if (key.name.length !== 1) return "";
+	if (key.shift && /^[a-z]$/.test(key.name)) return key.name.toUpperCase();
+	return key.name;
 }

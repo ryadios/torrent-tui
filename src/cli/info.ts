@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { decode, type BencodeValue } from "../torrent/parser";
 import { TorrentMetadata } from "../torrent/metadata";
+import { type BencodeValue, decode } from "../torrent/parser";
 
 export interface TorrentInfoFile {
 	path: string;
@@ -43,7 +43,9 @@ export function torrentInfoFromBytes(raw: Uint8Array): TorrentInfo {
 	);
 }
 
-export function torrentInfoFromMetadata(metadata: TorrentMetadata): TorrentInfo {
+export function torrentInfoFromMetadata(
+	metadata: TorrentMetadata,
+): TorrentInfo {
 	return {
 		name: metadata.name,
 		infoHash: Buffer.from(metadata.infoHash).toString("hex"),
