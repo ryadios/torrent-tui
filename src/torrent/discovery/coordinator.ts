@@ -10,6 +10,7 @@ import type {
 	TrackerAnnounceRequest,
 	TrackerResponse,
 } from "../types.ts";
+import { LsdService } from "./lsd.ts";
 
 const PEX_INTERVAL_MS = 60_000;
 
@@ -28,13 +29,18 @@ export interface DiscoveryCoordinatorOptions {
 	port?: number;
 	numwant?: number;
 	getSnapshot: () => DiscoverySnapshot;
-	onPeers: (peers: PeerInfo[], source: "tracker" | "dht" | "pex") => void;
+	onPeers: (
+		peers: PeerInfo[],
+		source: "tracker" | "dht" | "pex" | "lsd",
+	) => void;
 	announceTracker?: (
 		url: string,
 		metadata: TorrentMetadata,
 		request: TrackerAnnounceRequest,
 	) => Promise<TrackerResponse>;
 	dht?: DhtClient | null;
+	enableLsd?: boolean;
+	lsd?: LsdService | null;
 	scheduler?: DiscoveryScheduler;
 }
 
@@ -42,6 +48,7 @@ export class DiscoveryCoordinator {
 	private readonly tracker: TrackerCoordinator;
 	private readonly dht: DhtClient | null;
 	private readonly pex: PexCoordinator | null;
+	private readonly lsd: LsdService | null;
 	private readonly scheduler: DiscoveryScheduler;
 	private dhtRefreshTimer: unknown | null = null;
 	private dhtStarted = false;
@@ -76,6 +83,13 @@ export class DiscoveryCoordinator {
 		this.pex = metadata.private
 			? null
 			: new PexCoordinator(manager, (peers) => options.onPeers(peers, "pex"));
+		this.lsd =
+			metadata.private || options.enableLsd === false
+				? null
+				: (options.lsd ??
+					new LsdService(metadata, manager.listenPort(), (peer) =>
+						options.onPeers([peer], "lsd"),
+					));
 		this.scheduler = options.scheduler ?? {
 			setInterval: (fn, delayMs) => setInterval(fn, delayMs),
 			clearInterval: (handle) =>
@@ -88,6 +102,7 @@ export class DiscoveryCoordinator {
 		this.tracker.start();
 		await this.startDht();
 		this.pex?.start();
+		await this.lsd?.start().catch(() => undefined);
 	}
 
 	refreshNow(): void {
@@ -110,6 +125,7 @@ export class DiscoveryCoordinator {
 		this.swarmSeeds = 0;
 		this.swarmLeechers = 0;
 		this.pex?.stop();
+		this.lsd?.stop();
 		if (this.dhtRefreshTimer) {
 			this.scheduler.clearInterval(this.dhtRefreshTimer);
 			this.dhtRefreshTimer = null;

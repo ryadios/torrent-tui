@@ -17,11 +17,14 @@ export class TorrentMetadata {
 	readonly pieceCount: number;
 	readonly pieceHashes: Uint8Array[];
 	readonly files: FileInfo[];
+	readonly storageFiles: FileInfo[];
 	readonly infoHash: Uint8Array;
 	readonly infoBytes: Uint8Array;
 	readonly announceList: string[][];
 	readonly private: boolean;
 	readonly nodes: Array<{ ip: string; port: number }>;
+	readonly webSeeds: string[];
+	readonly isMultiFile: boolean;
 
 	constructor(
 		decoded: { [key: string]: BencodeValue },
@@ -68,16 +71,21 @@ export class TorrentMetadata {
 
 		// file list
 		this.files = [];
+		this.storageFiles = [];
 		let offset = 0;
 		const lengthField = infoDict.length;
 		const filesField = infoDict.files;
 
 		if (typeof lengthField === "number") {
 			// single-file torrent
-			this.files.push({ path: this.name, length: lengthField, offset: 0 });
+			const file = { path: this.name, length: lengthField, offset: 0 };
+			this.files.push(file);
+			this.storageFiles.push(file);
 			this.totalSize = lengthField;
+			this.isMultiFile = false;
 		} else if (Array.isArray(filesField)) {
 			// multi-file torrent
+			this.isMultiFile = true;
 			for (const entry of filesField) {
 				if (
 					typeof entry !== "object" ||
@@ -100,7 +108,15 @@ export class TorrentMetadata {
 				});
 
 				const joinedPath = [this.name, ...parts].join("/");
-				this.files.push({ path: joinedPath, length: fileLen, offset });
+				const padding = isPaddingFile(fileDict);
+				const file = {
+					path: joinedPath,
+					length: fileLen,
+					offset,
+					...(padding ? { padding: true } : {}),
+				};
+				this.storageFiles.push(file);
+				if (!padding) this.files.push(file);
 				offset += fileLen;
 			}
 			this.totalSize = offset;
@@ -140,6 +156,7 @@ export class TorrentMetadata {
 		}
 
 		this.nodes = parseDhtNodes(decoded.nodes);
+		this.webSeeds = parseWebSeeds(decoded["url-list"]);
 	}
 
 	formatSize(): string {
@@ -173,7 +190,7 @@ export class TorrentMetadata {
 			length: number;
 		}> = [];
 
-		for (const file of this.files) {
+		for (const file of this.storageFiles) {
 			const fileEnd = file.offset + file.length;
 			const overlapStart = Math.max(pieceStart, file.offset);
 			const overlapEnd = Math.min(pieceEnd, fileEnd);
@@ -207,6 +224,35 @@ export class TorrentMetadata {
 			`${this.name}   ${this.formatSize()}   ${this.pieceCount} × ${this.formatPieceLength()}   ${trackerParts || "no trackers"}`,
 		);
 	}
+}
+
+function isPaddingFile(fileDict: { [key: string]: BencodeValue }): boolean {
+	const attr = fileDict.attr;
+	if (typeof attr === "string") return attr.includes("p");
+	if (attr instanceof Uint8Array)
+		return TEXT_DECODER.decode(attr).includes("p");
+	return false;
+}
+
+function parseWebSeeds(value: BencodeValue | undefined): string[] {
+	const urls: string[] = [];
+	const add = (candidate: BencodeValue): void => {
+		const url =
+			candidate instanceof Uint8Array
+				? TEXT_DECODER.decode(candidate)
+				: typeof candidate === "string"
+					? candidate
+					: null;
+		if (!url) return;
+		if (!url.startsWith("http://") && !url.startsWith("https://")) return;
+		if (!urls.includes(url)) urls.push(url);
+	};
+	if (Array.isArray(value)) {
+		for (const entry of value) add(entry);
+	} else if (value !== undefined) {
+		add(value);
+	}
+	return urls;
 }
 
 function parseDhtNodes(

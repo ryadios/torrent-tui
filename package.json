@@ -21,6 +21,7 @@
 		"check": "bun src/index.ts --download",
 		"smoke": "bin/torrent-tui --help && bin/torrent-tui --version && if bin/torrent-tui nope.txt; then echo \"Expected invalid torrent path to fail\"; exit 1; fi",
 		"bench:startup": "bun scripts/benchmark-startup.ts",
+		"bench:webseed": "bun scripts/benchmark-webseed.ts",
 		"bench:verify": "bun scripts/benchmark-verify.ts",
 		"test": "bun test",
 		"test:watch": "bun test --watch",

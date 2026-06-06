@@ -32,6 +32,7 @@ export interface FileInfo {
 	path: string;
 	length: number;
 	offset: number; // byte offset in the flat concatenated stream
+	padding?: boolean;
 }
 
 export type TorrentStatus =

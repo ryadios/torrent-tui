@@ -11,12 +11,19 @@ import {
 	writeResumeData,
 } from "./resume.ts";
 import type { StorageManager } from "./storage.ts";
+import type { FileInfo } from "./types.ts";
 
 const BLOCK_SIZE = 16_384;
 const PIPELINE_DEPTH = 15;
 const CORRUPT_STRIKE_LIMIT = 2;
 const DEFAULT_MAX_UPLOAD_QUEUE_PER_PEER = 32;
 const DEFAULT_MAX_UPLOAD_QUEUE_GLOBAL = 512;
+const DEFAULT_WEB_SEED_TIMEOUT_MS = 10_000;
+
+type WebSeedFetch = (
+	input: string | URL | Request,
+	init?: RequestInit,
+) => Promise<Response>;
 
 export interface DownloaderOptions {
 	downloadRateLimitBps?: number;
@@ -24,6 +31,11 @@ export interface DownloaderOptions {
 	skippedFileIndices?: Set<number>;
 	maxUploadQueuePerPeer?: number;
 	maxUploadQueueGlobal?: number;
+	webSeeds?: string[];
+	maxWebSeedConnections?: number;
+	webSeedMaxRequestBytes?: number;
+	webSeedFetch?: WebSeedFetch;
+	webSeedTimeoutMs?: number;
 }
 
 interface UploadRequest {
@@ -53,6 +65,8 @@ export class Downloader extends EventEmitter {
 	private blockAssignments = new Map<string, Set<string>>(); // "idx:begin" → peerKeys
 	private corruptStrikes = new Map<string, number>();
 	private bannedPeers = new Set<string>();
+	private bannedWebSeeds = new Set<string>();
+	private webSeedPieces = new Set<number>();
 	private nextPieceIndex = 0;
 	private bytesThisSecond = 0;
 	private speedBytesPerSec = 0;
@@ -74,6 +88,11 @@ export class Downloader extends EventEmitter {
 	private skippedFileIndices: Set<number>;
 	private wantedPieces: Set<number>;
 	private downloadedWanted = 0;
+	private webSeeds: string[];
+	private maxWebSeedConnections: number;
+	private webSeedMaxRequestBytes: number;
+	private webSeedFetch: WebSeedFetch;
+	private webSeedTimeoutMs: number;
 
 	constructor(
 		private metadata: TorrentMetadata,
@@ -95,6 +114,12 @@ export class Downloader extends EventEmitter {
 			options.maxUploadQueueGlobal ?? DEFAULT_MAX_UPLOAD_QUEUE_GLOBAL;
 		this.skippedFileIndices = options.skippedFileIndices ?? new Set();
 		this.wantedPieces = this.computeWantedPieces();
+		this.webSeeds = options.webSeeds ?? [];
+		this.maxWebSeedConnections = options.maxWebSeedConnections ?? 0;
+		this.webSeedMaxRequestBytes = options.webSeedMaxRequestBytes ?? 16_777_216;
+		this.webSeedFetch = options.webSeedFetch ?? fetch;
+		this.webSeedTimeoutMs =
+			options.webSeedTimeoutMs ?? DEFAULT_WEB_SEED_TIMEOUT_MS;
 	}
 
 	start(): void {
@@ -125,6 +150,7 @@ export class Downloader extends EventEmitter {
 			this.downloadTokens = refillTokens(
 				this.downloadTokens,
 				this.downloadLimitBps,
+				this.webSeedMaxRequestBytes,
 			);
 			this.uploadTokens = refillTokens(this.uploadTokens, this.uploadLimitBps);
 			this.drainUploadQueue();
@@ -158,6 +184,8 @@ export class Downloader extends EventEmitter {
 			this.wirePeer(conn);
 			if (!conn.amChoked) this.fillPipeline(conn);
 		});
+
+		this.startWebSeeds();
 	}
 
 	stop(): void {
@@ -653,6 +681,169 @@ export class Downloader extends EventEmitter {
 			this.emit("complete");
 		}
 	}
+
+	private startWebSeeds(): void {
+		if (this.webSeeds.length === 0 || this.maxWebSeedConnections <= 0) return;
+		const workers = Math.min(this.maxWebSeedConnections, this.webSeeds.length);
+		for (let i = 0; i < workers; i++) {
+			void this.runWebSeedWorker(i);
+		}
+	}
+
+	private async runWebSeedWorker(seedOffset: number): Promise<void> {
+		let cursor = seedOffset;
+		while (!this.stopped) {
+			if (this.paused) {
+				await delay(250);
+				continue;
+			}
+			const pieceIndex = this.nextWebSeedPiece();
+			if (pieceIndex === null) {
+				await delay(500);
+				continue;
+			}
+			const seed = this.nextAvailableWebSeed(cursor);
+			if (!seed) {
+				this.webSeedPieces.delete(pieceIndex);
+				return;
+			}
+			cursor++;
+			try {
+				const data = await this.fetchWebSeedPiece(seed, pieceIndex);
+				this.finishWebSeedPiece(pieceIndex, data);
+			} catch {
+				this.bannedWebSeeds.add(seed);
+				this.webSeedPieces.delete(pieceIndex);
+			}
+		}
+	}
+
+	private nextAvailableWebSeed(cursor: number): string | null {
+		const candidates = this.webSeeds.filter(
+			(seed) => !this.bannedWebSeeds.has(seed),
+		);
+		if (candidates.length === 0) return null;
+		return candidates[cursor % candidates.length] ?? null;
+	}
+
+	private nextWebSeedPiece(): number | null {
+		for (const pieceIndex of this.wantedPieces) {
+			if (this.storage.hasPiece(pieceIndex)) continue;
+			if (this.inProgress.has(pieceIndex)) continue;
+			if (this.webSeedPieces.has(pieceIndex)) continue;
+			const length = this.pieceLength(pieceIndex);
+			if (length > this.webSeedMaxRequestBytes) continue;
+			this.webSeedPieces.add(pieceIndex);
+			return pieceIndex;
+		}
+		return null;
+	}
+
+	private async fetchWebSeedPiece(
+		seed: string,
+		pieceIndex: number,
+	): Promise<Uint8Array> {
+		const ranges = this.metadata.pieceToFileRanges(pieceIndex);
+		const parts: Uint8Array[] = [];
+		for (const { file, fileOffset, length } of ranges) {
+			if (file.padding) {
+				parts.push(new Uint8Array(length));
+				continue;
+			}
+			parts.push(await this.fetchWebSeedRange(seed, file, fileOffset, length));
+		}
+		return concatBytes(parts);
+	}
+
+	private async fetchWebSeedRange(
+		seed: string,
+		file: FileInfo,
+		fileOffset: number,
+		length: number,
+	): Promise<Uint8Array> {
+		const end = fileOffset + length - 1;
+		await this.waitForDownloadTokens(length);
+		const controller = new AbortController();
+		let timeout: ReturnType<typeof setTimeout> | null = null;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			timeout = setTimeout(() => {
+				controller.abort();
+				reject(
+					new Error(`webseed fetch timed out after ${this.webSeedTimeoutMs}ms`),
+				);
+			}, this.webSeedTimeoutMs);
+		});
+		let response: Response;
+		try {
+			response = await Promise.race([
+				this.webSeedFetch(this.webSeedUrl(seed, file), {
+					signal: controller.signal,
+					headers: { Range: `bytes=${fileOffset}-${end}` },
+				}),
+				timeoutPromise,
+			]);
+		} finally {
+			if (timeout) clearTimeout(timeout);
+		}
+		if (response.status !== 206) {
+			throw new Error(`webseed failed ${response.status}`);
+		}
+		const data = new Uint8Array(await response.arrayBuffer());
+		if (data.length !== length) throw new Error("webseed short read");
+		if (this.downloadLimitBps > 0) this.downloadTokens -= data.length;
+		return data;
+	}
+
+	private webSeedUrl(seed: string, file: FileInfo): string {
+		if (!this.metadata.isMultiFile) return seed;
+		const rootPrefix = `${this.metadata.name}/`;
+		const path = file.path.startsWith(rootPrefix)
+			? file.path.slice(rootPrefix.length)
+			: file.path;
+		return path ? `${seed.replace(/\/$/, "")}/${encodeURI(path)}` : seed;
+	}
+
+	private finishWebSeedPiece(pieceIndex: number, data: Uint8Array): void {
+		this.webSeedPieces.delete(pieceIndex);
+		if (this.stopped || this.storage.hasPiece(pieceIndex)) return;
+		const expected = this.metadata.pieceHashes[pieceIndex];
+		const actual = new SHA1().update(data).digest() as unknown as Uint8Array;
+		if (!expected || !bufEqual(actual, expected)) {
+			throw new Error("webseed hash mismatch");
+		}
+		this.storage.writePieceSync(pieceIndex, data);
+		this.saveResume();
+		this.bytesThisSecond += data.length;
+		if (this.wantedPieces.has(pieceIndex)) this.downloadedWanted++;
+		for (const peer of this.manager.connections.values())
+			peer.sendHave(pieceIndex);
+		this.emit("piece:verified", pieceIndex);
+		this.emit("activity", pieceIndex, 0, data.length);
+		this.emit(
+			"progress",
+			this.downloadedWanted,
+			this.wantedPieces.size,
+			this.speedBytesPerSec,
+		);
+		if (this.downloadedWanted >= this.wantedPieces.size) {
+			this.stop();
+			this.emitWantedComplete();
+		}
+	}
+
+	private async waitForDownloadTokens(length: number): Promise<void> {
+		if (this.downloadLimitBps <= 0) return;
+		while (!this.stopped && this.downloadTokens < length) {
+			await delay(100);
+		}
+	}
+
+	private pieceLength(pieceIndex: number): number {
+		const isLastPiece = pieceIndex === this.metadata.pieceCount - 1;
+		return isLastPiece
+			? this.metadata.totalSize - pieceIndex * this.metadata.pieceLength
+			: this.metadata.pieceLength;
+	}
 }
 
 function bufEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -661,8 +852,27 @@ function bufEqual(a: Uint8Array, b: Uint8Array): boolean {
 	return true;
 }
 
-function refillTokens(current: number, limitBps: number): number {
+function refillTokens(
+	current: number,
+	limitBps: number,
+	maxBurstBytes = BLOCK_SIZE,
+): number {
 	if (limitBps <= 0) return Infinity;
-	const capacity = Math.max(BLOCK_SIZE, limitBps);
+	const capacity = Math.max(BLOCK_SIZE, limitBps, maxBurstBytes);
 	return Math.min(capacity, current + limitBps);
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+	const total = parts.reduce((sum, part) => sum + part.length, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const part of parts) {
+		out.set(part, offset);
+		offset += part.length;
+	}
+	return out;
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }

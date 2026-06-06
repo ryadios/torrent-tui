@@ -23,6 +23,11 @@ import {
 } from "./extension.ts";
 import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { MessageBuffer } from "./message-buffer.ts";
+import {
+	type EncryptionPolicy,
+	initiateMseHandshake,
+	type MseStream,
+} from "./mse.ts";
 import { getPeerId } from "./peer-id.ts";
 import {
 	decodeHave,
@@ -43,9 +48,13 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 120_000;
 
 interface AdoptConnectedSocketOptions {
-	peerId: string;
-	reserved: Uint8Array;
+	decrypt?: MseStream | null;
+	encrypt?: MseStream | null;
 	localMetadata?: Uint8Array | null;
+	peerId: string;
+	remainderDecrypted?: boolean;
+	reserved: Uint8Array;
+	sendLocalHandshake?: boolean;
 }
 
 export class PeerConnection extends EventEmitter {
@@ -76,24 +85,59 @@ export class PeerConnection extends EventEmitter {
 	private infoHash: Uint8Array;
 	private localMetadata: Uint8Array | null = null;
 	private settle?: (err?: Error) => void;
+	private decryptStream: MseStream | null = null;
+	private encryptStream: MseStream | null = null;
 	extensionCapable = false;
 	peerExtensions: Map<string, number> = new Map();
 	peerMetadataSize: number | null = null;
+	private encryptionPolicy: EncryptionPolicy;
 
 	constructor(
 		address: string,
 		port: number,
 		infoHash: Uint8Array,
-		options: { localMetadata?: Uint8Array | null } = {},
+		options: {
+			encryptionPolicy?: EncryptionPolicy;
+			localMetadata?: Uint8Array | null;
+		} = {},
 	) {
 		super();
 		this.address = address;
 		this.port = port;
 		this.infoHash = infoHash;
+		this.encryptionPolicy = options.encryptionPolicy ?? "preferred";
 		this.localMetadata = options.localMetadata ?? null;
 	}
 
 	connect(): Promise<void> {
+		return this.connectWithPolicy();
+	}
+
+	private async connectWithPolicy(): Promise<void> {
+		if (this.encryptionPolicy === "required") {
+			await this.connectAttempt(true);
+			return;
+		}
+		if (this.encryptionPolicy === "preferred") {
+			try {
+				await this.connectAttempt(true);
+				return;
+			} catch {
+				this.cleanup();
+				this.socket?.destroy();
+				this.socket = null;
+				this.handshakeDone = false;
+				this.handshakeBuffer = new Uint8Array(0);
+				this.decryptStream = null;
+				this.encryptStream = null;
+				await this.connectAttempt(false);
+				return;
+			}
+		}
+		await this.connectAttempt(false);
+	}
+
+	private connectAttempt(encrypted: boolean): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let settled = false;
 			this.settle = (err?: Error) => {
@@ -120,20 +164,22 @@ export class PeerConnection extends EventEmitter {
 			}, CONNECT_TIMEOUT_MS);
 
 			sock.once("connect", () => {
-				sock.write(
-					buildHandshake(
-						this.infoHash,
-						getPeerId(),
-						buildExtensionReservedBytes(),
-					),
-				);
 				this.resetIdleTimer();
-				// Timeout continues running until handshake completes or times out
-			});
-
-			sock.on("data", (chunk: Buffer) => {
-				this.resetIdleTimer();
-				this.onData(new Uint8Array(chunk));
+				if (!encrypted) {
+					this.installSocketHandlers(sock);
+					sock.write(
+						buildHandshake(
+							this.infoHash,
+							getPeerId(),
+							buildExtensionReservedBytes(),
+						),
+					);
+					return;
+				}
+				void this.finishEncryptedConnect(sock).catch((err: unknown) => {
+					this.settle?.(err instanceof Error ? err : new Error(String(err)));
+					sock.destroy();
+				});
 			});
 
 			sock.once("error", (err) => {
@@ -141,12 +187,21 @@ export class PeerConnection extends EventEmitter {
 				this.settle?.(err); // settle() clears timeout
 			});
 
-			sock.once("close", () => {
-				this.cleanup();
-				this.settle?.(new Error("closed before handshake"));
-				this.emit("disconnect");
-			});
+			sock.once("close", this.onSocketClose);
 		});
+	}
+
+	private async finishEncryptedConnect(sock: Socket): Promise<void> {
+		const result = await initiateMseHandshake(
+			sock,
+			this.infoHash,
+			this.encryptionPolicy,
+			buildHandshake(this.infoHash, getPeerId(), buildExtensionReservedBytes()),
+		);
+		this.decryptStream = result.decrypt;
+		this.encryptStream = result.encrypt;
+		this.installSocketHandlers(sock);
+		if (result.initialData.length > 0) this.onPlainData(result.initialData);
 	}
 
 	adoptConnectedSocket(
@@ -156,6 +211,8 @@ export class PeerConnection extends EventEmitter {
 	): void {
 		this.socket = socket;
 		this.peerId = options.peerId;
+		this.decryptStream = options.decrypt ?? null;
+		this.encryptStream = options.encrypt ?? null;
 		this.extensionCapable = supportsExtensionProtocol(options.reserved);
 		this.handshakeDone = true;
 		this.handshakeBuffer = new Uint8Array(0);
@@ -163,28 +220,36 @@ export class PeerConnection extends EventEmitter {
 		this.startKeepalive();
 		this.resetIdleTimer();
 
-		socket.on("data", (chunk: Buffer) => {
-			this.resetIdleTimer();
-			this.onData(new Uint8Array(chunk));
-		});
-		socket.once("error", (err) => {
-			log("error", `${this.address}:${this.port}  ${err.message}`);
-		});
-		socket.once("close", () => {
-			this.cleanup();
-			this.emit("disconnect");
-		});
+		this.installSocketHandlers(socket);
+
+		if (options.sendLocalHandshake) {
+			this.write(
+				buildHandshake(
+					this.infoHash,
+					getPeerId(),
+					buildExtensionReservedBytes(),
+				),
+			);
+		}
 
 		if (this.extensionCapable) this.sendExtensionHandshake();
-		if (remainder.length > 0) this.onData(remainder);
+		if (remainder.length > 0) {
+			if (options.remainderDecrypted) this.onPlainData(remainder);
+			else this.onData(remainder);
+		}
 	}
 
 	private onData(chunk: Uint8Array): void {
+		const data = this.decryptStream ? this.decryptStream.update(chunk) : chunk;
+		this.onPlainData(data);
+	}
+
+	private onPlainData(data: Uint8Array): void {
 		if (!this.handshakeDone) {
 			// Accumulate until we have 68 bytes
-			const merged = new Uint8Array(this.handshakeBuffer.length + chunk.length);
+			const merged = new Uint8Array(this.handshakeBuffer.length + data.length);
 			merged.set(this.handshakeBuffer);
-			merged.set(chunk, this.handshakeBuffer.length);
+			merged.set(new Uint8Array(data), this.handshakeBuffer.length);
 			this.handshakeBuffer = merged;
 
 			if (this.handshakeBuffer.length < HANDSHAKE_LEN) return;
@@ -213,7 +278,7 @@ export class PeerConnection extends EventEmitter {
 			return;
 		}
 
-		this.onMessages(this.buf.push(chunk));
+		this.onMessages(this.buf.push(new Uint8Array(data)));
 	}
 
 	private onMessages(messages: Uint8Array[]): void {
@@ -459,7 +524,9 @@ export class PeerConnection extends EventEmitter {
 	}
 
 	private write(data: Uint8Array): void {
-		this.socket?.write(data);
+		this.socket?.write(
+			this.encryptStream ? this.encryptStream.update(data) : data,
+		);
 	}
 
 	private cleanup(): void {
@@ -471,4 +538,20 @@ export class PeerConnection extends EventEmitter {
 		this.cleanup();
 		this.socket?.destroy();
 	}
+
+	private installSocketHandlers(socket: Socket): void {
+		socket.on("data", (chunk: Buffer) => {
+			this.resetIdleTimer();
+			this.onData(new Uint8Array(chunk));
+		});
+		socket.once("error", (err) => {
+			log("error", `${this.address}:${this.port}  ${err.message}`);
+		});
+	}
+
+	private readonly onSocketClose = (): void => {
+		this.cleanup();
+		this.settle?.(new Error("closed before handshake"));
+		this.emit("disconnect");
+	};
 }

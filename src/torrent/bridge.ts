@@ -1,9 +1,10 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { AppSettings } from "../config/settings";
+import { type AppSettings, DEFAULT_SETTINGS } from "../config/settings";
 import type { Store, TorrentPeerState, TorrentState } from "../store";
 import { writeJsonAtomic } from "../utils/json";
 import { getDataDir, resolvePath } from "../utils/paths";
+import { type Blocklist, loadBlocklist } from "./blocklist";
 import { DiscoveryCoordinator } from "./discovery/coordinator";
 import type { Downloader } from "./downloader";
 import { parseMagnetUri } from "./magnet";
@@ -89,10 +90,10 @@ export class TorrentBridge {
 	private pendingFlush = false;
 	private downloadPath: string;
 
-	constructor(store: Store, config: AppSettings) {
+	constructor(store: Store, config: Partial<AppSettings>) {
 		this.store = store;
-		this.config = config;
-		this.downloadPath = resolvePath(config.downloadPath);
+		this.config = { ...DEFAULT_SETTINGS, ...config };
+		this.downloadPath = resolvePath(this.config.downloadPath);
 	}
 
 	async restoreSession(
@@ -648,6 +649,19 @@ export class TorrentBridge {
 		const entry = this.torrents.get(id);
 		if (!entry) return;
 
+		let blocklist: Blocklist;
+		try {
+			blocklist = await loadBlocklist(this.config);
+		} catch {
+			this.updateEntry(id, {
+				status: "error",
+				downloadBps: 0,
+				uploadBps: 0,
+				etaSeconds: null,
+			});
+			return;
+		}
+
 		const session = new TorrentSession(metadata, this.downloadPath);
 		entry.session = session;
 		entry.hasTransferActivity = false;
@@ -734,7 +748,10 @@ export class TorrentBridge {
 			etaSeconds: null,
 		});
 
-		const manager = new PeerManager(metadata, this.config.maxConnections);
+		const manager = new PeerManager(metadata, this.config.maxConnections, {
+			blocklist,
+			encryptionPolicy: this.config.encryption,
+		});
 		entry.manager = manager;
 		const trackerCoordinator = new DiscoveryCoordinator(metadata, manager, {
 			getSnapshot: () => {
@@ -753,6 +770,7 @@ export class TorrentBridge {
 					left: Math.max(0, metadata.totalSize - downloaded),
 				};
 			},
+			enableLsd: this.config.enableLsd,
 			onPeers: (peers) => {
 				const current = this.torrents.get(id);
 				const currentManager = current?.manager;
@@ -815,6 +833,9 @@ export class TorrentBridge {
 			downloadRateLimitBps: this.config.downloadRateLimitBps,
 			uploadRateLimitBps: this.config.uploadRateLimitBps,
 			skippedFileIndices,
+			webSeeds: this.config.enableWebSeeds ? metadata.webSeeds : [],
+			maxWebSeedConnections: this.config.maxWebSeedConnections,
+			webSeedMaxRequestBytes: this.config.webSeedMaxRequestBytes,
 		});
 		entry.downloader = downloader;
 
@@ -936,7 +957,11 @@ export class TorrentBridge {
 	}
 
 	private targetPathFor(metadata: TorrentMetadata): string {
-		if (metadata.files.length === 1 && metadata.files[0]) {
+		if (
+			!metadata.isMultiFile &&
+			metadata.files.length === 1 &&
+			metadata.files[0]
+		) {
 			return join(this.downloadPath, metadata.files[0].path);
 		}
 		return join(this.downloadPath, metadata.name);

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { Blocklist } from "../blocklist.ts";
 import type { TorrentMetadata } from "../metadata.ts";
 import { log } from "../metadata.ts";
 import type { PeerInfo } from "../types.ts";
@@ -6,7 +7,14 @@ import { PeerConnection } from "./connection.ts";
 import { buildExtensionReservedBytes } from "./extension.ts";
 import { buildHandshake, HANDSHAKE_LEN, parseHandshake } from "./handshake.ts";
 import { PeerListener } from "./listener.ts";
+import type { EncryptionPolicy, MseHandshakeResult } from "./mse.ts";
+import { respondMseHandshake } from "./mse.ts";
 import { getPeerId } from "./peer-id.ts";
+
+export interface PeerManagerOptions {
+	blocklist?: Blocklist;
+	encryptionPolicy?: EncryptionPolicy;
+}
 
 export class PeerManager extends EventEmitter {
 	readonly connections: Map<string, PeerConnection> = new Map();
@@ -20,13 +28,21 @@ export class PeerManager extends EventEmitter {
 	private optimisticKey: string | null = null;
 	private unchokedKeys = new Set<string>();
 	private bannedPeers = new Set<string>();
+	private blocklist: Blocklist | null;
+	private encryptionPolicy: EncryptionPolicy;
 
-	constructor(metadata: TorrentMetadata, maxConnections = 50) {
+	constructor(
+		metadata: TorrentMetadata,
+		maxConnections = 50,
+		options: PeerManagerOptions = {},
+	) {
 		super();
 		this.infoHash = metadata.infoHash;
 		this.infoBytes = metadata.infoBytes;
 		this.pieceCount = metadata.pieceCount;
 		this.maxConnections = maxConnections;
+		this.blocklist = options.blocklist ?? null;
+		this.encryptionPolicy = options.encryptionPolicy ?? "preferred";
 		this.listener = new PeerListener();
 	}
 
@@ -49,10 +65,12 @@ export class PeerManager extends EventEmitter {
 
 	private async connectOne(ip: string, port: number): Promise<void> {
 		const key = `${ip}:${port}`;
+		if (this.isBlocked({ ip, port })) return;
 		if (this.bannedPeers.has(key)) return;
 		if (this.connections.has(key)) return;
 
 		const conn = new PeerConnection(ip, port, this.infoHash, {
+			encryptionPolicy: this.encryptionPolicy,
 			localMetadata: this.infoBytes,
 		});
 
@@ -87,6 +105,21 @@ export class PeerManager extends EventEmitter {
 			merged.set(new Uint8Array(chunk), buf.length);
 			buf = merged;
 
+			if (buf.length < 20) return;
+			const header = Buffer.from(buf.subarray(0, 20)).toString("binary");
+			const plaintextHeader = "\x13BitTorrent protocol";
+			if (header !== plaintextHeader) {
+				socket.removeListener("data", onData);
+				void this.handleEncryptedInbound(socket, buf).catch(() =>
+					socket.destroy(),
+				);
+				return;
+			}
+			if (this.encryptionPolicy === "required") {
+				socket.destroy();
+				return;
+			}
+
 			if (buf.length < HANDSHAKE_LEN) return;
 
 			socket.removeListener("data", onData);
@@ -104,7 +137,11 @@ export class PeerManager extends EventEmitter {
 				const ip = socket.remoteAddress ?? "unknown";
 				const port = socket.remotePort ?? 0;
 				const key = `${ip}:${port}`;
-				if (this.bannedPeers.has(key) || this.connections.has(key)) {
+				if (
+					this.isBlocked({ ip, port }) ||
+					this.bannedPeers.has(key) ||
+					this.connections.has(key)
+				) {
 					socket.destroy();
 					return;
 				}
@@ -113,7 +150,9 @@ export class PeerManager extends EventEmitter {
 					`${key.padEnd(50)}  ok   ${result.peerId.slice(0, 8)}  (inbound)`,
 				);
 
-				const conn = new PeerConnection(ip, port, this.infoHash);
+				const conn = new PeerConnection(ip, port, this.infoHash, {
+					encryptionPolicy: this.encryptionPolicy,
+				});
 				const remainder = buf.slice(HANDSHAKE_LEN);
 				conn.on("bitfield", () => {
 					if (conn.countPiecesPublic() > 0 && !conn.amInterested) {
@@ -142,6 +181,95 @@ export class PeerManager extends EventEmitter {
 		};
 
 		socket.on("data", onData);
+	}
+
+	private async handleEncryptedInbound(
+		socket: import("node:net").Socket,
+		initialData: Uint8Array,
+	): Promise<void> {
+		const result = await respondMseHandshake(
+			socket,
+			this.infoHash,
+			this.encryptionPolicy,
+			initialData,
+		);
+		if (result.initialData.length < HANDSHAKE_LEN) {
+			this.waitForEncryptedInboundHandshake(socket, result);
+			return;
+		}
+		this.adoptEncryptedInbound(socket, result, result.initialData);
+	}
+
+	private waitForEncryptedInboundHandshake(
+		socket: import("node:net").Socket,
+		result: MseHandshakeResult,
+	): void {
+		let buffered = Buffer.from(result.initialData);
+		const onData = (chunk: Buffer): void => {
+			const plain = result.decrypt ? result.decrypt.update(chunk) : chunk;
+			buffered = Buffer.concat([buffered, plain]);
+			if (buffered.length < HANDSHAKE_LEN) return;
+			socket.removeListener("data", onData);
+			try {
+				this.adoptEncryptedInbound(socket, result, buffered);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				log("handshake", `FAIL (mse inbound)  ${msg}`);
+				socket.destroy();
+			}
+		};
+		socket.on("data", onData);
+	}
+
+	private adoptEncryptedInbound(
+		socket: import("node:net").Socket,
+		result: MseHandshakeResult,
+		initialData: Uint8Array,
+	): void {
+		const parsed = parseHandshake(initialData, this.infoHash);
+		const ip = socket.remoteAddress ?? "unknown";
+		const port = socket.remotePort ?? 0;
+		const key = `${ip}:${port}`;
+		if (
+			this.isBlocked({ ip, port }) ||
+			this.bannedPeers.has(key) ||
+			this.connections.has(key)
+		) {
+			socket.destroy();
+			return;
+		}
+		log(
+			"peer",
+			`${key.padEnd(50)}  ok   ${parsed.peerId.slice(0, 8)}  (mse inbound)`,
+		);
+
+		const conn = new PeerConnection(ip, port, this.infoHash, {
+			encryptionPolicy: this.encryptionPolicy,
+		});
+		const remainder = initialData.subarray(HANDSHAKE_LEN);
+		conn.on("bitfield", () => {
+			if (conn.countPiecesPublic() > 0 && !conn.amInterested) {
+				conn.sendInterested();
+			}
+		});
+		conn.on("disconnect", () => {
+			this.connections.delete(key);
+			this.emit("peerRemoved", conn);
+		});
+		conn.on("dhtPort", (dhtPort: number) => {
+			this.emit("dhtPort", { ip: conn.address, port: dhtPort });
+		});
+		this.connections.set(key, conn);
+		conn.adoptConnectedSocket(socket, remainder, {
+			decrypt: result.decrypt,
+			encrypt: result.encrypt,
+			localMetadata: this.infoBytes,
+			peerId: parsed.peerId,
+			remainderDecrypted: true,
+			reserved: parsed.reserved,
+			sendLocalHandshake: true,
+		});
+		this.emit("peerAdded", conn);
 	}
 
 	getUnchoked(): PeerConnection[] {
@@ -246,6 +374,7 @@ export class PeerManager extends EventEmitter {
 		const seen = new Set<string>();
 		return peers.filter((p) => {
 			const k = `${p.ip}:${p.port}`;
+			if (this.isBlocked(p)) return false;
 			if (this.bannedPeers.has(k) || this.connections.has(k)) return false;
 			if (seen.has(k)) return false;
 			seen.add(k);
@@ -261,7 +390,15 @@ export class PeerManager extends EventEmitter {
 
 	hasPeer(peer: PeerInfo): boolean {
 		const key = `${peer.ip}:${peer.port}`;
-		return this.connections.has(key) || this.bannedPeers.has(key);
+		return (
+			this.isBlocked(peer) ||
+			this.connections.has(key) ||
+			this.bannedPeers.has(key)
+		);
+	}
+
+	isBlocked(peer: PeerInfo): boolean {
+		return this.blocklist?.isBlocked(peer) ?? false;
 	}
 
 	availableSlots(): number {
