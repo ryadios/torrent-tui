@@ -110,12 +110,6 @@ export class PeerManager extends EventEmitter {
 			const plaintextHeader = "\x13BitTorrent protocol";
 			if (header !== plaintextHeader) {
 				socket.removeListener("data", onData);
-				if (this.encryptionPolicy === "allowed") {
-					void this.handleEncryptedInbound(socket, buf).catch(() =>
-						socket.destroy(),
-					);
-					return;
-				}
 				void this.handleEncryptedInbound(socket, buf).catch(() =>
 					socket.destroy(),
 				);
