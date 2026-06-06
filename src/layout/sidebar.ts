@@ -23,7 +23,6 @@ export class Sidebar {
 	private titleText: TextRenderable | null = null;
 	private headingRows: BoxRenderable[] = [];
 	private itemTexts: SidebarItem[] = [];
-	private rowCount = 0;
 	private layout: LayoutDimensions;
 
 	constructor(renderer: CliRenderer, store: Store, layout: LayoutDimensions) {
@@ -39,7 +38,6 @@ export class Sidebar {
 		const theme = getTheme();
 		const sidebarActive = focusArea === "sidebar";
 		const items = buildSidebarSelectableItems();
-		if (items.length !== this.rowCount) this.rebuildItems();
 
 		(this.container as unknown as { borderColor: string }).borderColor =
 			sidebarActive ? theme.accent : theme.border;
@@ -59,9 +57,11 @@ export class Sidebar {
 
 	updateLayout(layout: LayoutDimensions): void {
 		this.layout = layout;
+		this.container.left = layout.sidebar.x;
+		this.container.top = layout.sidebar.y;
 		this.container.width = layout.sidebar.width;
 		this.container.height = layout.sidebar.height;
-		this.rebuildItems();
+		this.positionRows();
 	}
 
 	private build(): BoxRenderable {
@@ -98,16 +98,13 @@ export class Sidebar {
 	}
 
 	private rebuildItems(): void {
-		for (const heading of this.headingRows) heading.destroy();
-		for (const item of this.itemTexts) item.container.destroy();
 		this.headingRows = [];
 		this.itemTexts = [];
 		const theme = getTheme();
-		let yOffset = 3;
 		const statusTitle = new BoxRenderable(this.renderer, {
 			position: "absolute",
 			left: 1,
-			top: yOffset,
+			top: 3,
 		});
 		const statusTitleText = new TextRenderable(this.renderer, {
 			content: "Status",
@@ -116,28 +113,40 @@ export class Sidebar {
 		statusTitle.add(statusTitleText);
 		this.container.add(statusTitle);
 		this.headingRows.push(statusTitle);
-		yOffset += 2;
 
-		for (let i = 0; i < SIDEBAR_ITEMS.status.length; i++) {
-			const item = SIDEBAR_ITEMS.status[i];
+		const items = buildSidebarSelectableItems();
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
 			if (!item) continue;
 			const isSelected = i === this.store.getState().selectedIndex;
 			const itemBox = new BoxRenderable(this.renderer, {
 				position: "absolute",
 				left: 1,
-				top: yOffset,
+				top: 5 + i,
 				width: this.layout.sidebar.width - 2,
 			});
 			const text = new TextRenderable(this.renderer, {
-				content: `${isSelected ? "> " : "  "}${item}`,
+				content: `${isSelected ? "> " : "  "}${item.label}`,
 				fg: isSelected ? theme.accent : theme.fgPrimary,
 			});
 			itemBox.add(text);
 			this.container.add(itemBox);
 			this.itemTexts.push({ container: itemBox, text, globalIndex: i });
-			yOffset += 1;
 		}
-		this.rowCount = buildSidebarSelectableItems().length;
+	}
+
+	private positionRows(): void {
+		for (const heading of this.headingRows) {
+			heading.left = 1;
+			heading.width = this.layout.sidebar.width - 2;
+		}
+		for (let i = 0; i < this.itemTexts.length; i++) {
+			const item = this.itemTexts[i];
+			if (!item) continue;
+			item.container.left = 1;
+			item.container.top = 5 + i;
+			item.container.width = this.layout.sidebar.width - 2;
+		}
 	}
 }
 

@@ -1,6 +1,14 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, relative } from "node:path";
+import {
+	basename,
+	dirname,
+	isAbsolute,
+	join,
+	normalize,
+	resolve,
+	sep,
+} from "node:path";
 import {
 	BoxRenderable,
 	type CliRenderer,
@@ -167,8 +175,23 @@ export class DirectoryPickerDialog {
 		}
 		if (key.name === "return" || key.name === "enter") {
 			const name = this.folderName.trim();
-			if (name.length > 0 && !name.includes("/")) {
+			if (name.length > 0) {
+				if (!isSafeFolderName(name)) {
+					this.errorMessage = "Folder name cannot include path segments";
+					this.render();
+					return true;
+				}
 				const nextPath = join(this.currentPath, name);
+				const resolvedNext = resolve(nextPath);
+				const rootResolved = resolve(ROOT_DIRECTORY);
+				if (
+					resolvedNext !== rootResolved &&
+					!resolvedNext.startsWith(rootResolved + sep)
+				) {
+					this.errorMessage = "Folder must stay inside your home directory";
+					this.render();
+					return true;
+				}
 				try {
 					mkdirSync(nextPath, { recursive: true });
 					this.creatingFolder = false;
@@ -237,10 +260,11 @@ export class DirectoryPickerDialog {
 			setText(this.pathText, truncateMiddle(this.currentPath, pathWidth));
 		}
 		if (this.hintText) {
-			const content = this.creatingFolder
-				? `New folder: ${this.folderName}█`
-				: this.errorMessage ||
-					"Enter open  Space choose  Backspace parent  n new  Esc cancel";
+			const content =
+				this.errorMessage ||
+				(this.creatingFolder
+					? `New folder: ${this.folderName}█`
+					: "Enter open  Space choose  Backspace parent  n new  Esc cancel");
 			setText(this.hintText, truncateMiddle(content, pathWidth));
 			setFg(this.hintText, this.errorMessage ? theme.error : theme.fgMuted);
 		}
@@ -256,9 +280,7 @@ export class DirectoryPickerDialog {
 			}
 			const selected = this.scrollOffset + i === this.cursor;
 			const parent = entry === dirname(this.currentPath);
-			const name = parent
-				? ".."
-				: (entry.split("/").filter(Boolean).pop() ?? entry);
+			const name = parent ? ".." : basename(entry);
 			setText(
 				row.text,
 				`${" ".repeat(MARGIN)}${truncateMiddle(name, pathWidth)}`,
@@ -360,7 +382,7 @@ export class DirectoryPickerDialog {
 function nearestExistingDirectory(path: string): string {
 	let current = normalize(path || ROOT_DIRECTORY);
 	if (!isWithinRoot(current)) return ROOT_DIRECTORY;
-	while (!existsSync(current) || !statSync(current).isDirectory()) {
+	while (!existsSync(current) || !isDirectorySafe(current)) {
 		const parent = dirname(current);
 		if (parent === current || !isWithinRoot(parent)) return ROOT_DIRECTORY;
 		current = parent;
@@ -368,10 +390,26 @@ function nearestExistingDirectory(path: string): string {
 	return current;
 }
 
+function isDirectorySafe(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
 function isWithinRoot(path: string): boolean {
 	const normalized = normalize(path);
-	const rel = relative(ROOT_DIRECTORY, normalized);
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+	const root = resolve(ROOT_DIRECTORY);
+	const target = resolve(normalized);
+	return target === root || target.startsWith(root + sep);
+}
+
+function isSafeFolderName(name: string): boolean {
+	if (isAbsolute(name)) return false;
+	if (/^[a-zA-Z]:/.test(name)) return false;
+	if (name.includes("/") || name.includes("\\")) return false;
+	return !name.split(/[\\/]+/).some((part) => part === ".." || part === "");
 }
 
 function charFromKey(key: KeyEvent): string {

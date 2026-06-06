@@ -47,6 +47,12 @@ describe("filterTorrents", () => {
 		expect(result.map((t) => t.id)).toEqual(["1"]);
 	});
 
+	test("keeps legacy string view filtering", () => {
+		const result = filterTorrents(torrents, "Downloading");
+
+		expect(result.map((t) => t.id)).toEqual(["1"]);
+	});
+
 	test("does not filter uncategorized torrents", () => {
 		const result = filterTorrents(torrents, {
 			view: "All",

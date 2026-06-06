@@ -343,6 +343,48 @@ describe("delete confirmation controller flow", () => {
 			renderer.destroy();
 		}
 	});
+
+	test("cancels pending throttled renders when stopped", async () => {
+		const { renderer } = await createTestRenderer({
+			width: 80,
+			height: 24,
+		});
+		try {
+			const store = new Store({
+				selectedIndex: 0,
+				selectedView: "All",
+				torrents: [],
+				totalDownloadBps: 0,
+				totalUploadBps: 0,
+			});
+			const sidebar = createCountingRenderable();
+			const content = createCountingRenderable();
+			const status = createCountingRenderable();
+			const controller = new AppController(
+				renderer,
+				store,
+				sidebar as never,
+				content as never,
+				status as never,
+				{
+					handleInput: () => false,
+					show: () => {},
+				} as never,
+			);
+			controller.start();
+			const initialUpdates = content.updateCount;
+
+			store.setState({ totalDownloadBps: 1 });
+			controller.stop();
+			await new Promise((resolve) => setTimeout(resolve, 120));
+
+			expect(sidebar.updateCount).toBe(initialUpdates);
+			expect(content.updateCount).toBe(initialUpdates);
+			expect(status.updateCount).toBe(initialUpdates);
+		} finally {
+			renderer.destroy();
+		}
+	});
 });
 
 function callHandleKeyPress(

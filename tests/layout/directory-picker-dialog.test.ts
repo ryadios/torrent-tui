@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { KeyEvent } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { DirectoryPickerDialog } from "../../src/layout/directory-picker-dialog.ts";
@@ -63,12 +63,43 @@ describe("DirectoryPickerDialog", () => {
 			renderer.destroy();
 		}
 	});
+
+	test("rejects folder names that escape the current directory", async () => {
+		await withWorkspaceTempDir(async (dir) => {
+			const { captureCharFrame, renderer, renderOnce } =
+				await createTestRenderer({
+					width: 80,
+					height: 24,
+				});
+			try {
+				const dialog = new DirectoryPickerDialog(renderer, TEST_LAYOUT);
+
+				dialog.open(dir);
+				dialog.handleInput(key("n"));
+				dialog.handleInput(key("."));
+				dialog.handleInput(key("."));
+				dialog.handleInput(key("enter"));
+				await renderOnce();
+
+				expect(captureCharFrame()).toContain(
+					"Folder name cannot include path segments",
+				);
+			} finally {
+				renderer.destroy();
+			}
+		});
+	});
 });
 
 async function withWorkspaceTempDir<T>(
 	fn: (dir: string) => T | Promise<T>,
 ): Promise<T> {
-	const dir = mkdtempSync(join(process.cwd(), ".directory-picker-test-"));
+	const cwdFromHome = relative(homedir(), process.cwd());
+	const base =
+		cwdFromHome && !cwdFromHome.startsWith("..") && !isAbsolute(cwdFromHome)
+			? join(homedir(), cwdFromHome)
+			: homedir();
+	const dir = mkdtempSync(join(base, ".directory-picker-test-"));
 	try {
 		return await fn(dir);
 	} finally {

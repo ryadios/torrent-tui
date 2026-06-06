@@ -37,6 +37,7 @@ export class AppController {
 	private filesTabCursor = 0;
 	private renderTimer: ReturnType<typeof setTimeout> | null = null;
 	private lastRenderAt = 0;
+	private stopped = false;
 
 	// Injected by App after bridge/dialog are created
 	onAddTorrent?: () => void;
@@ -100,6 +101,7 @@ export class AppController {
 	}
 
 	start(): void {
+		this.stopped = false;
 		this.store.subscribe(() => this.scheduleRender());
 
 		this.renderer.keyInput.on("keypress", (key) => {
@@ -110,6 +112,14 @@ export class AppController {
 		});
 
 		this.refreshView();
+	}
+
+	stop(): void {
+		this.stopped = true;
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = null;
+		}
 	}
 
 	confirm(
@@ -125,6 +135,7 @@ export class AppController {
 	}
 
 	private refreshView(): void {
+		if (this.stopped) return;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = null;
@@ -133,16 +144,19 @@ export class AppController {
 	}
 
 	private scheduleRender(): void {
+		if (this.stopped) return;
 		if (this.renderTimer) return;
 		const elapsed = Date.now() - this.lastRenderAt;
 		const delay = Math.max(0, RENDER_THROTTLE_MS - elapsed);
 		this.renderTimer = setTimeout(() => {
 			this.renderTimer = null;
+			if (this.stopped) return;
 			this.renderView();
 		}, delay);
 	}
 
 	private renderView(): void {
+		if (this.stopped) return;
 		this.lastRenderAt = Date.now();
 		const state = this.store.getState();
 		const len = this.getVisibleTorrents(state).length;

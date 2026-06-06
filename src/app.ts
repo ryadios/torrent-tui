@@ -177,6 +177,8 @@ export class App {
 
 		this.controller.onQuit = async () => {
 			await this.bridge.stopAll();
+			this.controller.stop();
+			this.toastManager.destroy();
 			this.renderer.destroy();
 		};
 
@@ -331,21 +333,15 @@ export class App {
 
 	private async addTorrentInBackground(
 		input: string,
-		filename: string,
+		_filename: string,
 	): Promise<void> {
 		try {
 			const result = await this.bridge.prepareAdd(input);
-			this.toastManager.show({
-				id: `added-${Date.now()}`,
-				type: result.added ? "success" : "info",
-				title: result.added ? "Torrent added" : "Torrent already added",
-				message: result.name || filename,
-			});
-			this.renderer.requestRender();
-
 			if (result.added) {
 				this.pendingAdd = result;
 				this.openCategorySelectForAdd();
+			} else {
+				this.renderer.requestRender();
 			}
 		} catch (err) {
 			this.toastManager.show({
@@ -376,6 +372,12 @@ export class App {
 					this.clearCategoryFlow();
 					return;
 				}
+				this.toastManager.show({
+					id: `added-${Date.now()}`,
+					type: "success",
+					title: "Torrent added",
+					message: result.name,
+				});
 				const torrent = this.store
 					.getState()
 					.torrents.find((t) => t.id === result.id);
