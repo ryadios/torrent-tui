@@ -1,5 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+	formatTorrentInfo,
+	formatTorrentInfoJson,
+	readTorrentInfo,
+} from "./cli/info";
+import { parseCliArgs } from "./cli/parse";
 
 class CliExit extends Error {}
 
@@ -27,14 +33,19 @@ Usage:
                                       Connect to peers and print handshake summary
   torrent-tui <file.torrent|magnet> --download
                                       Download from the command line
+  torrent-tui <file.torrent|magnet> --info
+                                      Print torrent metadata without starting the TUI
+  torrent-tui <file.torrent|magnet> --info --json
+                                      Print torrent metadata as JSON
 
 Magnet links:
   Supported for BitTorrent v1 btih magnets with trackers, x.pe peers, or DHT peers.
-  --verify and --handshake can use a magnet after its metadata is cached.
+  --verify, --handshake, and --info can use a magnet after its metadata is cached.
 
 Options:
   --help, -h                          Show this help
-  --version, -v                       Print the version`);
+  --version, -v                       Print the version
+  --json                              Machine-readable output for --info`);
 }
 
 function validateTorrentArg(arg: string): string {
@@ -69,7 +80,7 @@ async function cachedTorrentArg(arg: string): Promise<string> {
 }
 
 function sep(): void {
-	console.log("-".repeat(44));
+	console.log("-".repeat(80));
 }
 
 async function loadTorrent(torrentPath: string) {
@@ -307,31 +318,41 @@ async function runDownload(torrentPath: string): Promise<void> {
 	manager.close();
 }
 
-async function main() {
-	const args = process.argv.slice(2);
+async function runInfo(torrentPath: string, json: boolean): Promise<void> {
+	const info = readTorrentInfo(torrentPath);
+	if (json) {
+		process.stdout.write(formatTorrentInfoJson(info));
+		return;
+	}
+	process.stdout.write(formatTorrentInfo(info));
+}
 
-	if (args.includes("--help") || args.includes("-h")) {
+async function main() {
+	const command = (() => {
+		try {
+			return parseCliArgs(process.argv.slice(2));
+		} catch (err) {
+			fail(`Error: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	})();
+
+	if (command.action === "help") {
 		await printHelp();
 		return;
 	}
 
-	if (args.includes("--version") || args.includes("-v")) {
+	if (command.action === "version") {
 		console.log(await getVersion());
 		return;
 	}
 
-	const torrentArg = args.find((a) => !a.startsWith("--"));
-	const isVerify = args.includes("--verify");
-	const isHandshake = args.includes("--handshake");
-	const isDownload = args.includes("--download");
-
-	if (torrentArg) {
+	if (command.input) {
 		const { isMagnetUri } = await import("./torrent/magnet");
-		const torrentPath = isMagnetUri(torrentArg)
-			? torrentArg
-			: validateTorrentArg(torrentArg);
+		const torrentPath = isMagnetUri(command.input)
+			? command.input
+			: validateTorrentArg(command.input);
 
-		if (isVerify) {
+		if (command.action === "verify") {
 			const resolvedPath = await cachedTorrentArg(torrentPath);
 			await runVerify(resolvedPath).catch((e: unknown) =>
 				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
@@ -339,7 +360,7 @@ async function main() {
 			return;
 		}
 
-		if (isHandshake) {
+		if (command.action === "handshake") {
 			const resolvedPath = await cachedTorrentArg(torrentPath);
 			await runHandshake(resolvedPath).catch((e: unknown) =>
 				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
@@ -347,12 +368,20 @@ async function main() {
 			return;
 		}
 
-		if (isDownload) {
+		if (command.action === "download") {
 			const resolvedPath = await resolveTorrentArg(torrentPath).catch(
 				(e: unknown) =>
 					fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			await runDownload(resolvedPath).catch((e: unknown) =>
+				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
+			);
+			return;
+		}
+
+		if (command.action === "info") {
+			const resolvedPath = await cachedTorrentArg(torrentPath);
+			await runInfo(resolvedPath, command.json).catch((e: unknown) =>
 				fail(`Error: ${e instanceof Error ? e.message : String(e)}`),
 			);
 			return;
