@@ -274,4 +274,4 @@ The workflow publishes to npm with trusted publishing, creates `vX.Y.Z`, and cre
 
 ## License
 
-MIT
+MIT License. See [LICENSE](./LICENSE).
