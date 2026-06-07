@@ -54,13 +54,23 @@ From inside the app:
 | `j` / `k` or arrow keys | Move selection |
 | `Tab` / `Shift+Tab` | Change focus |
 | `a` | Add a `.torrent` file or magnet link |
-| `/` in add dialog | Type a magnet link manually |
-| `Space` | Pause or resume the selected torrent |
-| `d` | Remove the selected torrent |
-| `D` | Remove the selected torrent and downloaded files |
+| `/` | Search torrent names |
+| `Space` on the torrent table | Pause, resume, or restart the selected torrent |
+| `c` on the torrent table | Change the selected torrent's category |
+| `d` on the torrent table | Remove the selected torrent |
+| `D` on the torrent table | Remove the selected torrent and downloaded files |
+| `m` on the sidebar | Manage categories |
 | `q` | Quit |
 
-The detail panel has `Pieces`, `Peers`, and `Files` tabs. Focus it with `Tab`, then use `h` / `l`, `[` / `]`, or left/right arrows to switch tabs. Multi-file torrents open a file picker before download; use `Space` to toggle a file, `a` to select all, `n` to select none, and `Enter` to confirm.
+Search filters the torrent table by name. Press `/` to start typing, `Enter` to keep the current filter, or `Esc` to clear it.
+
+The add dialog has `Files` and `Magnet` tabs. Use `Tab` to switch tabs, `j` / `k` or arrow keys to choose a `.torrent` file, and `Enter` to add it. In the `Magnet` tab, paste or type a magnet URI and press `Enter` to submit it. After adding a torrent, choose a category before the download starts; categories can route torrents to preset save paths.
+
+Category dialogs use `j` / `k` or arrow keys to move and `Enter` to choose. Press `n` to create a category, `c` to reassign the selected torrent from the table, and `m` from the sidebar to manage categories. In the category manager, use `e` or `Enter` to edit and `d` to delete. In the category editor, type the name, press `b` to browse for a save path, `x` to clear the path, and `Enter` to save. The directory picker uses `Enter` to open a folder, `Space` to select the current folder, `Backspace` or left arrow to go up, and `n` to create a folder under your home directory.
+
+The detail panel has `Pieces`, `Peers`, and `Files` tabs. Focus it with `Tab`, then use `h` / `l`, `[` / `]`, or left/right arrows to switch tabs. In the `Files` tab, use `j` / `k` to move through long file lists.
+
+Multi-file torrents open a file picker before download. Use `Space` to toggle a file, `a` to select all, `n` to select none, and `Enter` to confirm. Pressing `Esc` accepts all files and closes the picker.
 
 ## Commands
 
@@ -110,6 +120,8 @@ Default settings:
 	"downloadPath": "~/Downloads",
 	"maxConnections": 50,
 	"torrentFolder": "~/Downloads",
+	"categories": [],
+	"defaultCategoryId": null,
 	"downloadRateLimitBps": 0,
 	"uploadRateLimitBps": 0,
 	"enableWebSeeds": true,
@@ -164,6 +176,8 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 | --- | --- | --- |
 | `downloadPath` | Where torrent payload files are written and verified. | On torrent add, resume, verify, and startup restore. |
 | `torrentFolder` | Folder shown by the add-torrent dialog. | When you open the add dialog. |
+| `categories` | Save-path presets shown during add and category reassignment. | When adding torrents, reassigning categories, and restoring sessions. |
+| `defaultCategoryId` | Optional category preselected in the add flow. | When choosing a category for a new torrent. |
 | `maxConnections` | Maximum number of peers the client will connect to per torrent. | During peer discovery and download. |
 | `downloadRateLimitBps` | Download speed cap in bytes per second. `0` means unlimited. | During downloads. |
 | `uploadRateLimitBps` | Upload speed cap in bytes per second. `0` means unlimited. | During uploads to peers. |
@@ -181,6 +195,7 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 
 - Use a fast local SSD for `downloadPath` if you want quicker verification and fewer stalls on reopen.
 - Point `torrentFolder` at the directory where you keep `.torrent` files so adding torrents is faster.
+- Use categories when different torrents should land in different save paths. A category without a save path falls back to `downloadPath`.
 - Lower `maxConnections` if your network or CPU struggles with many peers; raise it if you want more parallel peer selection.
 - Use `downloadRateLimitBps` and `uploadRateLimitBps` when you need bandwidth caps.
 - Set `encryption` to `required` only if you want to reject plaintext peers.
@@ -205,6 +220,8 @@ The `Downloading` sidebar filter includes queued, checking, connecting, download
 | Magnet links | Available for v1 magnets with tracker, explicit-peer, or DHT discovery |
 | Detail panel | Pieces, peers, and files tabs |
 | File selection | Available for multi-file torrents before download |
+| Search | Name-only torrent table filtering |
+| Categories | Save-path presets, add-flow selection, reassignment, and management dialogs |
 | Engine controls | Download/upload rate limits and max peer connections |
 | Peer discovery | Trackers, DHT, PEX, and LSD |
 | Web seeds | BEP 19 HTTP web seeds |
