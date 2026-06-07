@@ -9,26 +9,46 @@ const ACTIVE_STATUSES = new Set<TorrentState["status"]>([
 	"stalled",
 ]);
 
+export interface TorrentFilterOptions {
+	searchQuery?: string;
+	view?: string;
+}
+
 export function filterTorrents(
 	torrents: TorrentState[],
-	view: string,
+	viewOrOptions: string | TorrentFilterOptions,
 ): TorrentState[] {
+	const options =
+		typeof viewOrOptions === "string" ? { view: viewOrOptions } : viewOrOptions;
+	const view = options.view ?? "All";
+	const query = (options.searchQuery ?? "").trim().toLowerCase();
+	let result: TorrentState[];
 	switch (view) {
 		case "Downloading":
-			return torrents.filter((t) => ACTIVE_STATUSES.has(t.status));
+			result = torrents.filter((t) => ACTIVE_STATUSES.has(t.status));
+			break;
 		case "Seeding":
 		case "Completed":
-			return torrents.filter((t) => t.status === "seeding");
+			result = torrents.filter((t) => t.status === "seeding");
+			break;
 		case "Paused":
-			return torrents.filter((t) => t.status === "paused");
+			result = torrents.filter((t) => t.status === "paused");
+			break;
 		case "Stopped":
-			return torrents.filter(
+			result = torrents.filter(
 				(t) =>
 					t.status === "stopped" ||
 					t.status === "error" ||
 					t.status === "missing",
 			);
+			break;
 		default:
-			return torrents;
+			result = torrents;
 	}
+
+	if (query.length > 0) {
+		result = result.filter((t) => t.name.toLowerCase().includes(query));
+	}
+
+	return result;
 }

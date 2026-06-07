@@ -36,6 +36,9 @@ import {
 interface TorrentEntry {
 	torrentPath: string;
 	magnetUri?: string;
+	savePath: string;
+	categoryId: string | null;
+	categoryName: string | null;
 	session: TorrentSession | null;
 	manager: PeerManager | null;
 	trackerCoordinator: DiscoveryCoordinator | null;
@@ -55,6 +58,9 @@ interface SessionRegistry {
 		infoHash: string;
 		torrentPath: string;
 		magnetUri?: string;
+		savePath?: string;
+		categoryId?: string | null;
+		categoryName?: string | null;
 	}>;
 }
 
@@ -63,6 +69,7 @@ interface RestoreCheckJob {
 	id: string;
 	metadata: TorrentMetadata;
 	onProgress?: (progress: RestoreProgress) => void;
+	savePath: string;
 	total: number;
 }
 
@@ -79,6 +86,22 @@ export interface AddTorrentResult {
 	id: string;
 	name: string;
 	added: boolean;
+}
+
+export interface PreparedTorrentAdd extends AddTorrentResult {
+	files: TorrentState["files"];
+	isMultiFile: boolean;
+	magnetUri?: string;
+	pieceLength: number;
+	torrentPath: string;
+	totalPieces: number;
+	totalSize: number;
+}
+
+export interface ConfirmTorrentAddOptions {
+	categoryId: string | null;
+	categoryName: string | null;
+	savePath: string;
 }
 
 export class TorrentBridge {
@@ -117,7 +140,11 @@ export class TorrentBridge {
 		let current = 0;
 		this.restoreCheckQueue = [];
 
-		for (const { infoHash, torrentPath, magnetUri } of registry.torrents) {
+		for (const restored of registry.torrents) {
+			const { infoHash, torrentPath, magnetUri } = restored;
+			const savePath = resolvePath(restored.savePath ?? this.downloadPath);
+			const categoryId = restored.categoryId ?? null;
+			const categoryName = restored.categoryName ?? null;
 			current++;
 			if (!torrentPath || !existsSync(torrentPath)) {
 				if (!magnetUri) continue;
@@ -126,6 +153,9 @@ export class TorrentBridge {
 					const entry: TorrentEntry = {
 						torrentPath: "",
 						magnetUri,
+						savePath,
+						categoryId,
+						categoryName,
 						session: null,
 						manager: null,
 						trackerCoordinator: null,
@@ -139,7 +169,10 @@ export class TorrentBridge {
 						state: {
 							id: infoHash,
 							name: magnet.displayName ?? `magnet:${infoHash.slice(0, 12)}`,
-							targetPath: this.downloadPath,
+							categoryId,
+							categoryName,
+							savePath,
+							targetPath: savePath,
 							totalSize: 0,
 							pieceLength: 0,
 							downloadedPieces: 0,
@@ -166,10 +199,7 @@ export class TorrentBridge {
 				const actualId = Buffer.from(metadata.infoHash).toString("hex");
 				if (actualId !== infoHash) continue;
 
-				const trustedResume = loadTrustedResumeData(
-					metadata,
-					this.downloadPath,
-				);
+				const trustedResume = loadTrustedResumeData(metadata, savePath);
 				const downloadedPieces = trustedResume?.verifiedPieces.length ?? 0;
 				const resumeComplete = downloadedPieces >= metadata.pieceCount;
 
@@ -210,10 +240,16 @@ export class TorrentBridge {
 					checkingPromise: null,
 					selectedFileIndices: restoredSelection,
 					fileDownloadedBytes: metadata.files.map(() => 0),
+					savePath,
+					categoryId,
+					categoryName,
 					state: {
 						id: infoHash,
 						name: metadata.name,
-						targetPath: this.targetPathFor(metadata),
+						categoryId,
+						categoryName,
+						savePath,
+						targetPath: this.targetPathFor(metadata, savePath),
 						totalSize: metadata.totalSize,
 						pieceLength: metadata.pieceLength,
 						downloadedPieces,
@@ -237,6 +273,7 @@ export class TorrentBridge {
 						id: infoHash,
 						metadata,
 						onProgress,
+						savePath,
 						total,
 					});
 				} else {
@@ -310,7 +347,7 @@ export class TorrentBridge {
 		job: RestoreCheckJob,
 		controller: AbortController,
 	): Promise<void> {
-		const storage = new StorageManager(job.metadata, this.downloadPath);
+		const storage = new StorageManager(job.metadata, job.savePath);
 		try {
 			const resumeData = readResumeData(job.id);
 			const resumeCount =
@@ -339,7 +376,7 @@ export class TorrentBridge {
 			if (summary.corrupt === 0) {
 				writeResumeData(
 					job.metadata,
-					this.downloadPath,
+					job.savePath,
 					storage.getDownloadedPieces(),
 				);
 			}
@@ -386,129 +423,111 @@ export class TorrentBridge {
 		}
 	}
 
+	async prepareAdd(input: string): Promise<PreparedTorrentAdd> {
+		return parseMagnetUriSafe(input)
+			? this.prepareMagnet(input)
+			: this.prepareTorrent(input);
+	}
+
+	async confirmAdd(
+		prepared: PreparedTorrentAdd,
+		options: ConfirmTorrentAddOptions,
+	): Promise<AddTorrentResult> {
+		if (this.torrents.has(prepared.id)) {
+			return { id: prepared.id, name: prepared.name, added: false };
+		}
+		const savePath = resolvePath(options.savePath);
+		const metadata = this.parseTorrent(prepared.torrentPath);
+		const entry = this.createQueuedEntry({
+			categoryId: options.categoryId,
+			categoryName: options.categoryName,
+			id: prepared.id,
+			magnetUri: prepared.magnetUri,
+			metadata,
+			savePath,
+			torrentPath: prepared.torrentPath,
+		});
+		this.torrents.set(prepared.id, entry);
+		this.saveRegistry();
+		this.flushAll();
+		return { id: prepared.id, name: prepared.name, added: true };
+	}
+
 	async addTorrent(torrentPath: string): Promise<AddTorrentResult> {
+		const prepared = await this.prepareTorrent(torrentPath);
+		if (!prepared.added)
+			return { id: prepared.id, name: prepared.name, added: false };
+		return this.confirmAdd(prepared, {
+			categoryId: null,
+			categoryName: null,
+			savePath: this.downloadPath,
+		});
+	}
+
+	private async prepareTorrent(
+		torrentPath: string,
+	): Promise<PreparedTorrentAdd> {
 		const metadata = this.parseTorrent(torrentPath);
 		const id = Buffer.from(metadata.infoHash).toString("hex");
 
-		if (this.torrents.has(id)) return { id, name: metadata.name, added: false };
-
-		const entry: TorrentEntry = {
+		return {
+			id,
+			name: metadata.name,
+			added: !this.torrents.has(id),
+			files: buildFileStates(metadata.files, null),
+			isMultiFile: metadata.files.length > 1,
+			pieceLength: metadata.pieceLength,
 			torrentPath,
-			session: null,
-			manager: null,
-			trackerCoordinator: null,
-			downloader: null,
-			hasTransferActivity: false,
-			uploadedAccumulator: createUploadedAccumulator(),
-			checkingAbort: null,
-			checkingPromise: null,
-			selectedFileIndices: null,
-			fileDownloadedBytes: metadata.files.map(() => 0),
-			state: {
-				id,
-				name: metadata.name,
-				targetPath: this.targetPathFor(metadata),
-				totalSize: metadata.totalSize,
-				pieceLength: metadata.pieceLength,
-				downloadedPieces: 0,
-				totalPieces: metadata.pieceCount,
-				status: "queued",
-				downloadBps: 0,
-				uploadBps: 0,
-				peers: 0,
-				seeds: 0,
-				leechers: 0,
-				peerDetails: [],
-				files: buildFileStates(metadata.files, null),
-				etaSeconds: null,
-			},
+			totalPieces: metadata.pieceCount,
+			totalSize: metadata.totalSize,
 		};
-		this.torrents.set(id, entry);
-		this.saveRegistry();
-		this.flushAll();
-
-		return { id, name: metadata.name, added: true };
 	}
 
 	async addMagnet(uri: string): Promise<AddTorrentResult> {
+		const prepared = await this.prepareMagnet(uri);
+		if (!prepared.added)
+			return { id: prepared.id, name: prepared.name, added: false };
+		return this.confirmAdd(prepared, {
+			categoryId: null,
+			categoryName: null,
+			savePath: this.downloadPath,
+		});
+	}
+
+	private async prepareMagnet(uri: string): Promise<PreparedTorrentAdd> {
 		const magnet = parseMagnetUri(uri);
 		const id = magnet.infoHashHex;
 		const name = magnet.displayName ?? `magnet:${id.slice(0, 12)}`;
 
-		if (this.torrents.has(id)) return { id, name, added: false };
-
-		const entry: TorrentEntry = {
-			torrentPath: "",
-			magnetUri: uri,
-			session: null,
-			manager: null,
-			trackerCoordinator: null,
-			downloader: null,
-			hasTransferActivity: false,
-			uploadedAccumulator: createUploadedAccumulator(),
-			checkingAbort: null,
-			checkingPromise: null,
-			selectedFileIndices: null,
-			fileDownloadedBytes: [],
-			state: {
+		if (this.torrents.has(id)) {
+			return {
 				id,
 				name,
-				targetPath: this.downloadPath,
-				totalSize: 0,
-				pieceLength: 0,
-				downloadedPieces: 0,
-				totalPieces: 0,
-				status: "metadata",
-				downloadBps: 0,
-				uploadBps: 0,
-				peers: magnet.peers.length,
-				seeds: 0,
-				leechers: 0,
-				peerDetails: [],
+				added: false,
 				files: [],
-				etaSeconds: null,
-			},
-		};
-		this.torrents.set(id, entry);
-		this.flushAll();
-
-		try {
-			const result = await resolveMagnetToTorrent(uri, {
-				onProgress: (progress: MagnetResolveProgress) => {
-					this.updateEntry(id, {
-						status: progress.status,
-						peers: progress.peers,
-					});
-				},
-			});
-			const metadata = this.parseTorrent(result.torrentPath);
-			entry.torrentPath = result.torrentPath;
-			entry.selectedFileIndices = null;
-			entry.fileDownloadedBytes = metadata.files.map(() => 0);
-			entry.state = {
-				...entry.state,
-				name: metadata.name,
-				targetPath: this.targetPathFor(metadata),
-				totalSize: metadata.totalSize,
-				pieceLength: metadata.pieceLength,
-				downloadedPieces: 0,
-				totalPieces: metadata.pieceCount,
-				status: "queued",
-				peers: 0,
-				files: buildFileStates(metadata.files, null),
+				isMultiFile: false,
+				magnetUri: uri,
+				pieceLength: 0,
+				torrentPath: "",
+				totalPieces: 0,
+				totalSize: 0,
 			};
-			this.saveRegistry();
-			this.flushAll();
-			return { id, name: metadata.name, added: true };
-		} catch (err) {
-			this.updateEntry(id, {
-				status: "stalled",
-				downloadBps: 0,
-				uploadBps: 0,
-				etaSeconds: null,
-			});
-			throw err;
 		}
+
+		const result = await resolveMagnetToTorrent(uri);
+		const metadata = this.parseTorrent(result.torrentPath);
+		return {
+			id,
+			name: metadata.name,
+			added: true,
+			files: buildFileStates(metadata.files, null),
+			isMultiFile: metadata.files.length > 1,
+			magnetUri: uri,
+			pieceLength: metadata.pieceLength,
+			torrentPath: result.torrentPath,
+			totalPieces: metadata.pieceCount,
+			totalSize: metadata.totalSize,
+		};
 	}
 
 	async startTorrent(id: string): Promise<void> {
@@ -557,6 +576,57 @@ export class TorrentBridge {
 		this.updateEntry(id, { status: "downloading" });
 	}
 
+	setTorrentCategory(
+		id: string,
+		category: { id: string; name: string } | null,
+	): void {
+		const entry = this.torrents.get(id);
+		if (!entry) return;
+		entry.categoryId = category?.id ?? null;
+		entry.categoryName = category?.name ?? null;
+		entry.state = {
+			...entry.state,
+			categoryId: entry.categoryId,
+			categoryName: entry.categoryName,
+		};
+		this.saveRegistry();
+		this.flushAll();
+	}
+
+	renameCategory(categoryId: string, name: string): void {
+		let changed = false;
+		for (const entry of this.torrents.values()) {
+			if (entry.categoryId !== categoryId) continue;
+			entry.categoryName = name;
+			entry.state = {
+				...entry.state,
+				categoryName: name,
+			};
+			changed = true;
+		}
+		if (!changed) return;
+		this.saveRegistry();
+		this.flushAll();
+	}
+
+	clearCategory(categoryId: string): void {
+		let changed = false;
+		for (const entry of this.torrents.values()) {
+			if (entry.categoryId !== categoryId) continue;
+			entry.categoryId = null;
+			entry.categoryName = null;
+			entry.state = {
+				...entry.state,
+				categoryId: null,
+				categoryName: null,
+			};
+			changed = true;
+		}
+		if (!changed) return;
+		this.saveRegistry();
+		this.flushAll();
+	}
+
 	setFileSelection(id: string, selectedIndices: number[] | null): void {
 		const entry = this.torrents.get(id);
 		if (!entry) return;
@@ -576,14 +646,9 @@ export class TorrentBridge {
 			const resumePieces =
 				downloadedPieces.length > 0
 					? downloadedPieces
-					: (loadTrustedResumeData(metadata, this.downloadPath)
-							?.verifiedPieces ?? []);
-			writeResumeData(
-				metadata,
-				this.downloadPath,
-				resumePieces,
-				selectedIndices,
-			);
+					: (loadTrustedResumeData(metadata, entry.savePath)?.verifiedPieces ??
+						[]);
+			writeResumeData(metadata, entry.savePath, resumePieces, selectedIndices);
 		}
 		this.scheduleFlush();
 	}
@@ -605,7 +670,7 @@ export class TorrentBridge {
 		if (deleteFiles) {
 			try {
 				const metadata = this.parseTorrent(entry.torrentPath);
-				const targetPath = this.targetPathFor(metadata);
+				const targetPath = this.targetPathFor(metadata, entry.savePath);
 				rmSync(targetPath, { recursive: true, force: true });
 			} catch {
 				// ignore deletion errors
@@ -662,7 +727,7 @@ export class TorrentBridge {
 			return;
 		}
 
-		const session = new TorrentSession(metadata, this.downloadPath);
+		const session = new TorrentSession(metadata, entry.savePath);
 		entry.session = session;
 		entry.hasTransferActivity = false;
 		entry.uploadedAccumulator = createUploadedAccumulator();
@@ -956,15 +1021,15 @@ export class TorrentBridge {
 		return join(getDataDir(), "session.json");
 	}
 
-	private targetPathFor(metadata: TorrentMetadata): string {
+	private targetPathFor(metadata: TorrentMetadata, savePath: string): string {
 		if (
 			!metadata.isMultiFile &&
 			metadata.files.length === 1 &&
 			metadata.files[0]
 		) {
-			return join(this.downloadPath, metadata.files[0].path);
+			return join(savePath, metadata.files[0].path);
 		}
-		return join(this.downloadPath, metadata.name);
+		return join(savePath, metadata.name);
 	}
 
 	private saveRegistry(): void {
@@ -974,11 +1039,63 @@ export class TorrentBridge {
 				infoHash,
 				torrentPath: entry.torrentPath,
 				magnetUri: entry.magnetUri,
+				savePath: entry.savePath,
+				categoryId: entry.categoryId,
+				categoryName: entry.categoryName,
 			}));
 		writeJsonAtomic(this.registryPath(), {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			torrents: entries,
 		});
+	}
+
+	private createQueuedEntry(options: {
+		categoryId: string | null;
+		categoryName: string | null;
+		id: string;
+		magnetUri?: string;
+		metadata: TorrentMetadata;
+		savePath: string;
+		torrentPath: string;
+	}): TorrentEntry {
+		return {
+			torrentPath: options.torrentPath,
+			magnetUri: options.magnetUri,
+			savePath: options.savePath,
+			categoryId: options.categoryId,
+			categoryName: options.categoryName,
+			session: null,
+			manager: null,
+			trackerCoordinator: null,
+			downloader: null,
+			hasTransferActivity: false,
+			uploadedAccumulator: createUploadedAccumulator(),
+			checkingAbort: null,
+			checkingPromise: null,
+			selectedFileIndices: null,
+			fileDownloadedBytes: options.metadata.files.map(() => 0),
+			state: {
+				id: options.id,
+				name: options.metadata.name,
+				categoryId: options.categoryId,
+				categoryName: options.categoryName,
+				savePath: options.savePath,
+				targetPath: this.targetPathFor(options.metadata, options.savePath),
+				totalSize: options.metadata.totalSize,
+				pieceLength: options.metadata.pieceLength,
+				downloadedPieces: 0,
+				totalPieces: options.metadata.pieceCount,
+				status: "queued",
+				downloadBps: 0,
+				uploadBps: 0,
+				peers: 0,
+				seeds: 0,
+				leechers: 0,
+				peerDetails: [],
+				files: buildFileStates(options.metadata.files, null),
+				etaSeconds: null,
+			},
+		};
 	}
 
 	private updateEntry(id: string, partial: Partial<TorrentState>): void {
@@ -1073,6 +1190,15 @@ function computeSkippedFromSelection(
 		if (!selectedSet.has(i)) skipped.add(i);
 	}
 	return skipped;
+}
+
+function parseMagnetUriSafe(input: string): boolean {
+	try {
+		parseMagnetUri(input);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export function deriveRuntimeStatus(

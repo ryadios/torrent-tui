@@ -27,8 +27,22 @@ export class StatusBar {
 		this.renderer.root.add(this.container);
 	}
 
-	update(state: AppState, focusArea: FocusArea = "sidebar"): void {
+	update(
+		state: AppState,
+		focusArea: FocusArea = "sidebar",
+		searchActive = false,
+	): void {
 		const theme = getTheme();
+		if (searchActive || state.searchQuery.length > 0) {
+			(this.leftText as unknown as { content: string }).content =
+				` / ${state.searchQuery}${searchActive ? "█" : ""}`;
+			(this.leftText as unknown as { fg: string }).fg = theme.accent;
+			(this.rightText as unknown as { content: string }).content = searchActive
+				? "type search  Enter keep  Esc clear "
+				: this.hintsFor(focusArea);
+			(this.rightText as unknown as { fg: string }).fg = theme.fgMuted;
+			return;
+		}
 		const dl = formatSpeed(state.totalDownloadBps);
 		const ul = formatSpeed(state.totalUploadBps);
 		const count = state.torrents.length;
@@ -87,9 +101,9 @@ export class StatusBar {
 	private hintsFor(focusArea: FocusArea): string {
 		switch (focusArea) {
 			case "sidebar":
-				return "j/k nav  Tab focus  a add  q quit ";
+				return "j/k nav  m manage  Tab focus  a add  q quit ";
 			case "table":
-				return "j/k select  Space action  d del  D del+files  Tab focus ";
+				return "j/k select  / search  c category  Space action  d del ";
 			case "details":
 				return "h/l tabs  j/k scroll  Tab focus  q quit ";
 		}

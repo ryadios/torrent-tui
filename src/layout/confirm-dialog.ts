@@ -22,11 +22,11 @@ export class ConfirmDialog {
 		this.layout = layout;
 	}
 
-	open(message: string): void {
+	open(message: string, detail = "Files will be deleted from disk."): void {
 		if (this.isOpen) return;
 		this.isOpen = true;
 		this.focusedBtn = "cancel";
-		this.build(message);
+		this.build(message, detail);
 	}
 
 	close(): void {
@@ -89,7 +89,7 @@ export class ConfirmDialog {
 		}
 	}
 
-	private build(message: string): void {
+	private build(message: string, detail: string): void {
 		const theme = getTheme();
 		const left = Math.max(
 			0,
@@ -127,7 +127,7 @@ export class ConfirmDialog {
 		);
 		container.add(
 			new TextRenderable(this.renderer, {
-				content: "  Files will be deleted from disk.".padEnd(inner),
+				content: `  ${detail}`.padEnd(inner),
 				fg: theme.fgSecondary,
 			}),
 		);

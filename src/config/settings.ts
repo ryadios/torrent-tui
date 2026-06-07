@@ -1,9 +1,17 @@
 import { z } from "zod";
 
+export const categorySettingsSchema = z.object({
+	id: z.string().min(1),
+	name: z.string().min(1),
+	savePath: z.string().nullable().default(null),
+});
+
 export const settingsSchema = z.object({
 	downloadPath: z.string().default("~/Downloads"),
 	maxConnections: z.number().min(1).max(500).default(50),
 	torrentFolder: z.string().default("~/Downloads"),
+	categories: z.array(categorySettingsSchema).default([]),
+	defaultCategoryId: z.string().nullable().default(null),
 	downloadRateLimitBps: z.number().min(0).default(0),
 	uploadRateLimitBps: z.number().min(0).default(0),
 	enableWebSeeds: z.boolean().default(true),
@@ -18,11 +26,14 @@ export const settingsSchema = z.object({
 });
 
 export type AppSettings = z.infer<typeof settingsSchema>;
+export type CategorySettings = z.infer<typeof categorySettingsSchema>;
 
 export const DEFAULT_SETTINGS: AppSettings = {
 	downloadPath: "~/Downloads",
 	maxConnections: 50,
 	torrentFolder: "~/Downloads",
+	categories: [],
+	defaultCategoryId: null,
 	downloadRateLimitBps: 0,
 	uploadRateLimitBps: 0,
 	enableWebSeeds: true,

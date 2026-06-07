@@ -41,7 +41,10 @@ export class ContentWindow {
 		const state = this.store.getState();
 		(this.tableFrame as unknown as { borderColor: string }).borderColor =
 			focusArea === "table" ? theme.accent : theme.border;
-		const visible = filterTorrents(state.torrents, state.selectedView);
+		const visible = filterTorrents(state.torrents, {
+			view: state.selectedView,
+			searchQuery: state.searchQuery,
+		});
 		this.torrentTable.update(visible, selectedIndex, focusArea);
 		const selectedTorrent =
 			focusArea === "sidebar" ? null : (visible[selectedIndex] ?? null);
