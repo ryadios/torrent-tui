@@ -12,7 +12,7 @@
 ![torrent-tui terminal interface](./docs/screenshot.png)
 
 > [!NOTE]
-> `torrent-tui` currently requires [Bun](https://bun.sh). Standalone binaries are planned after the npm CLI release path is stable.
+> `torrent-tui` currently requires [Bun](https://bun.sh) and [NodeJS](https://nodejs.org/en/download). Standalone binaries are planned after the npm CLI release path is stable.
 
 > [!IMPORTANT]
 > Use torrent clients only with content you have the right to download or share. `torrent-tui` is a client implementation, not a content source.
