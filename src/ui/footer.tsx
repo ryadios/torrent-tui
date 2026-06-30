@@ -7,6 +7,9 @@ import { theme } from "./theme";
 type FooterProps = {
 	canAdd?: boolean;
 	hasSelection?: boolean;
+	focusedPane?: "list" | "details";
+	detailsTab?: "overview" | "files";
+	filesAvailable?: boolean;
 	search?: {
 		editing: boolean;
 		draft: string;
@@ -22,6 +25,9 @@ type FooterProps = {
 export function Footer({
 	canAdd = false,
 	hasSelection = false,
+	focusedPane = "list",
+	detailsTab = "overview",
+	filesAvailable = false,
 	search,
 	status = { kind: "idle" },
 }: FooterProps) {
@@ -33,22 +39,44 @@ export function Footer({
 	}, [search?.editing]);
 
 	const compact = width < 30;
+	const paneHint = { key: "Tab", label: "pane" };
+	const contextHints =
+		focusedPane === "details"
+			? [
+					...(detailsTab === "files"
+						? [{ key: "j/k", label: "move" }]
+						: []),
+					...(filesAvailable ? [{ key: "←/→", label: "tabs" }] : []),
+					...(detailsTab === "files"
+						? [{ key: "Enter", label: "toggle" }]
+						: []),
+				]
+			: [{ key: "j/k", label: "select" }];
 	const hints = compact
 		? [keybinds.quit]
-		: width < 54
-			? [
-					...(canAdd ? [keybinds.add] : []),
-					...(search ? [keybinds.search] : []),
-					keybinds.quit,
-				]
-			: [
-					...(canAdd ? [keybinds.add] : []),
-					...(hasSelection
-						? [keybinds.start, keybinds.stop, keybinds.remove]
-						: []),
-					...(search ? [keybinds.search] : []),
-					keybinds.quit,
-				];
+		: width < 40
+			? [...(canAdd ? [keybinds.add] : []), paneHint, keybinds.quit]
+			: width < 64
+				? [
+						...(canAdd ? [keybinds.add] : []),
+						...(search ? [keybinds.search] : []),
+						paneHint,
+						keybinds.quit,
+					]
+				: [
+						...(canAdd ? [keybinds.add] : []),
+						...(hasSelection
+							? [keybinds.start, keybinds.stop, keybinds.remove]
+							: []),
+						...(search ? [keybinds.search] : []),
+						paneHint,
+						...(width >= 100
+							? contextHints
+							: width >= 72
+								? contextHints.slice(0, 1)
+								: []),
+						keybinds.quit,
+					];
 
 	return (
 		<box

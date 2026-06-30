@@ -13,6 +13,7 @@ import { theme } from "../../../src/ui/theme";
 
 const operations: TorrentOperations = {
 	listTorrents: () => new Promise(() => {}),
+	getTorrentDetails: () => new Promise(() => {}),
 	getSessionStats: () => new Promise(() => {}),
 	addTorrent: async () => ({
 		torrent_added: {

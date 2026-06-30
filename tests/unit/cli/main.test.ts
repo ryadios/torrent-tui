@@ -21,6 +21,7 @@ function makeOperations(
 ): TorrentOperations {
 	return {
 		listTorrents: async () => emptyList,
+		getTorrentDetails: async () => undefined,
 		getSessionStats: async () => ({ download_speed: 0, upload_speed: 0 }),
 		addTorrent: async () => addedResult,
 		startTorrent: async () => {},

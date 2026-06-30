@@ -25,6 +25,8 @@ type SessionSpeedGraphProps = {
 	samples: SessionSpeedSample[];
 	stats?: SessionStats;
 	now: number;
+	width: number;
+	height: number;
 };
 
 function drawPoint(
@@ -166,30 +168,32 @@ export function SessionSpeedGraph({
 	samples,
 	stats,
 	now,
+	width: frameWidth,
+	height,
 }: SessionSpeedGraphProps) {
-	const { width: terminalWidth, height: terminalHeight } =
-		useTerminalDimensions();
+	const { height: terminalHeight } = useTerminalDimensions();
 	if (terminalHeight < 16) return null;
 
 	const width = Math.max(
 		0,
-		Math.min(MAX_SPEED_FRAME_WIDTH - 4, terminalWidth - 6),
+		Math.min(MAX_SPEED_FRAME_WIDTH - 4, frameWidth - 6),
 	);
 	const plotRows = terminalHeight < 28 ? 2 : 4;
 
 	return (
 		<Frame
+			borderColor={theme.borderSubtle}
 			titleRight={
 				<box paddingX={1} backgroundColor={theme.background}>
-					<text fg={theme.primary} selectable={false}>
+					<text fg={theme.textMuted} selectable={false}>
 						Speed
 					</text>
 				</box>
 			}
 			style={{
-				width: MAX_SPEED_FRAME_WIDTH,
+				width: frameWidth,
+				height,
 				maxWidth: "100%",
-				alignSelf: "flex-start",
 				flexShrink: 0,
 				paddingLeft: 1,
 				paddingRight: 1,
