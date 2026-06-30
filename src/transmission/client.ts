@@ -2,6 +2,7 @@ import type { SessionInfo, SessionStats } from "./types/session";
 import type {
 	TorrentAddResult,
 	TorrentAddSource,
+	TorrentDetails,
 	TorrentList,
 } from "./types/torrent";
 
@@ -150,6 +151,30 @@ export class TransmissionClient {
 				"error_string",
 			],
 		});
+	}
+
+	async getTorrentDetails(
+		torrentHash: string,
+		includeFiles = false,
+	): Promise<TorrentDetails | undefined> {
+		const fields = [
+			"hash_string",
+			"name",
+			"download_dir",
+			"downloaded_ever",
+			"uploaded_ever",
+			"upload_ratio",
+			"peers_connected",
+			"is_private",
+			"metadata_percent_complete",
+		];
+		if (includeFiles) fields.push("files");
+
+		const { torrents } = await this.rpcCall<{ torrents: TorrentDetails[] }>(
+			"torrent_get",
+			{ ids: [torrentHash], fields },
+		);
+		return torrents[0];
 	}
 
 	addTorrent(source: TorrentAddSource): Promise<TorrentAddResult> {

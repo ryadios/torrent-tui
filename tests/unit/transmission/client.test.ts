@@ -159,6 +159,55 @@ describe("TransmissionClient operations", () => {
 		});
 	});
 
+	test("queries selected torrent details and requests files only when asked", async () => {
+		const details = {
+			hash_string: "abc123",
+			name: "example.iso",
+			download_dir: "/downloads",
+			downloaded_ever: 1024,
+			uploaded_ever: 256,
+			upload_ratio: 0.25,
+			peers_connected: 3,
+			is_private: false,
+			metadata_percent_complete: 1,
+			files: [
+				{ name: "example.iso", length: 2048, bytes_completed: 1024 },
+			],
+		};
+		const requests = stubFetch([
+			jsonResponse({ result: { torrents: [details] } }),
+			jsonResponse({ result: { torrents: [details] } }),
+		]);
+		const client = new TransmissionClient();
+
+		await expect(client.getTorrentDetails("abc123")).resolves.toEqual(
+			details,
+		);
+		await expect(client.getTorrentDetails("abc123", true)).resolves.toEqual(
+			details,
+		);
+
+		const fields = [
+			"hash_string",
+			"name",
+			"download_dir",
+			"downloaded_ever",
+			"uploaded_ever",
+			"upload_ratio",
+			"peers_connected",
+			"is_private",
+			"metadata_percent_complete",
+		];
+		expectRpcRequest(requestAt(requests, 0), "torrent_get", {
+			ids: ["abc123"],
+			fields,
+		});
+		expectRpcRequest(requestAt(requests, 1), "torrent_get", {
+			ids: ["abc123"],
+			fields: [...fields, "files"],
+		});
+	});
+
 	test("adds and starts a torrent in one request", async () => {
 		const addResult = {
 			torrent_added: {
