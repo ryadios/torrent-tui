@@ -1,0 +1,7 @@
+reviews:
+  auto_review:
+    base_branches:
+      - "^v2$"
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
