@@ -39,7 +39,7 @@ tests/                                # Unit and future integration tests
 ## Version control workflow
 
 - Start each task on a new branch from `v2` using a concise type/scope branch name.
-- Divide work into coherent phases by subfeature or subtask, using focused Conventional Commits in `type(scope): summary` form.
+- Divide work into coherent phases by subfeature or subtask, using focused Conventional Commits in `type: summary` form.
 - Open pull requests against `v2` with concise, human-readable titles without commit-type prefixes.
 - Keep PR descriptions concise and use a `Summary` heading containing the overall change; rely on CodeRabbit for detailed commit summaries.
 
