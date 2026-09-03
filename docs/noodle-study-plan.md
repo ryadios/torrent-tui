@@ -1,227 +1,372 @@
-# Noodle / OpenTUI Study Plan
+# Noodle / OpenTUI: Self-Contained Study Plan
 
 **Target:** 2–3 focused sessions
 
-**Method:** read + verify, in dependency order
+**Method:** read this document first; opening the linked source files is
+optional. The links are provenance and deeper references, not prerequisites.
 
-**Reference:** [wilfredinni/noodle](https://github.com/wilfredinni/noodle),
-`main` inspected on 2026-08-30. Its manifest currently identifies Noodle as
-version `0.8.2` and uses OpenTUI `^0.5.8`; this project uses OpenTUI `^0.5.8`,
-so copy ideas rather than version-specific APIs.
+**Reference snapshot:** Noodle `0.8.2`, OpenTUI `^0.5.8`, inspected on
+2026-08-31. This project also uses OpenTUI `^0.5.8`.
 
-## Goal and reading rules
+## The one-page mental model
 
-The goal is to understand how Noodle gets from typed data and disk I/O to a
-clean, interactive OpenTUI screen. It is a UI reference with a small DAL
-study, not a template for copying Noodle's entire product architecture.
+Noodle is a file-backed REST client. YAML request files are parsed into typed
+objects, React hooks turn those objects into screen state, and OpenTUI renders
+that state as terminal cells. Network execution stays outside the components.
 
-Read the rows below in order. Open only the named files first; skim adjacent
-files when a symbol is called. After each row, answer the verification question
-before moving upward.
+```text
+CLI arguments
+  → bootstrap/config/environment
+  → OpenTUI renderer + React root + keymap provider
+  → App (theme and global settings)
+  → AppInner (state, effects, actions, overlays)
+  → MainView
+  → Sidebar + request/response panes + status bar
+```
 
-Keep the study focused:
-
-- quote only the small excerpts marked below; read full files for context;
-- treat `src/ui/` as a composed system, not as a list of every component;
-- trace one request from disk to response instead of studying every auth,
-  converter, cookie, or editor feature;
-- record decisions for `torrent-tui` as **adopt**, **later**, or **defer**.
-
-## Session 1 — foundations and the small DAL
-
-| Order | Read | What to learn | Verify before continuing | torrent-tui impact |
-|---|---|---|---|---|
-| 1. Repository shape | [`README.md`](https://github.com/wilfredinni/noodle/blob/main/README.md), [`package.json`](https://github.com/wilfredinni/noodle/blob/main/package.json), [`AGENTS.md`](https://github.com/wilfredinni/noodle/blob/main/AGENTS.md), [architecture notes](https://github.com/wilfredinni/noodle/blob/main/.agents/skills/noodle-dev/architecture.md) | Bun scripts, package boundaries, conventions, and the difference between TUI, CLI, automation, and file-backed collections. | Explain what `bun run dev`, `bun test`, `bun run typecheck`, `bun run lint`, and `bun run build:bin` each verify. If docs and scripts disagree, trust `package.json` for execution and record the discrepancy. | Keep the first app small. Do not add Noodle's release, importer, editor, or automation surface just because it exists. |
-| 2. Leaf contracts | [`src/schema/index.ts`](https://github.com/wilfredinni/noodle/blob/main/src/schema/index.ts), [`src/auth/defaults.ts`](https://github.com/wilfredinni/noodle/blob/main/src/auth/defaults.ts), pure helpers such as [`src/collectionPath.ts`](https://github.com/wilfredinni/noodle/blob/main/src/collectionPath.ts) and [`src/variableReference.ts`](https://github.com/wilfredinni/noodle/blob/main/src/variableReference.ts) | How domain types stay independent from React and OpenTUI; how unions encode valid request/body/auth states. | Sketch `Request`, `Collection`, `Response`, and `NetworkEvent` without opening the UI. Identify which values are persisted and which are runtime-only. | Keep Transmission response/session types separate from UI props. Reuse plain TypeScript types before introducing a store or class hierarchy. |
-| 3. Parse and serialize | [`src/lang/parse.ts`](https://github.com/wilfredinni/noodle/blob/main/src/lang/parse.ts), [`src/lang/serialize.ts`](https://github.com/wilfredinni/noodle/blob/main/src/lang/serialize.ts), [`src/lang/folder.ts`](https://github.com/wilfredinni/noodle/blob/main/src/lang/folder.ts), [`src/lang/auth.ts`](https://github.com/wilfredinni/noodle/blob/main/src/lang/auth.ts) | Strict boundary validation: YAML becomes a typed object, unknown or invalid shapes fail before the UI sees them. | Take one sample request YAML and list the fields that survive parse → edit → serialize. | Treat Transmission RPC payload/result validation as a boundary concern; do not let raw JSON shape leak through every component. |
-| 4. File-backed collection | [`src/filestore/load.ts`](https://github.com/wilfredinni/noodle/blob/main/src/filestore/load.ts), [`src/filestore/save.ts`](https://github.com/wilfredinni/noodle/blob/main/src/filestore/save.ts), [`src/filestore/index.ts`](https://github.com/wilfredinni/noodle/blob/main/src/filestore/index.ts), [`src/env/load.ts`](https://github.com/wilfredinni/noodle/blob/main/src/env/load.ts), [`src/env/save.ts`](https://github.com/wilfredinni/noodle/blob/main/src/env/save.ts) | Recursive loading, hidden-directory rules, path safety, parse errors, and the distinction between direct and atomic writes. | Draw `walk()`: directory → folder/request → parse → sort → collection. Note which failures are shown in the UI and which stop startup. | Keep local UI preferences/config separate from Transmission-owned torrent state. Reuse `fetch`/filesystem primitives; add no persistence layer until a real preference needs it. |
-| 5. Request execution | [`src/requests/index.ts`](https://github.com/wilfredinni/noodle/blob/main/src/requests/index.ts), [`src/requests/send.ts`](https://github.com/wilfredinni/noodle/blob/main/src/requests/send.ts), [`src/requests/substitute.ts`](https://github.com/wilfredinni/noodle/blob/main/src/requests/substitute.ts), [`src/hooks/useResponse.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/useResponse.ts), [`src/ui/sendState.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/sendState.ts) | The executor is outside the components; the hook owns loading, cancellation, caching, incremental network events, and final success/error state. | Explain the states `idle → sending → done/error`, and what happens when the selected request changes or a send is cancelled. | Apply the shape to `src/transmission/client.ts`: keep RPC calls outside JSX, normalize errors once, and use `AbortController` for refresh/action cancellation. |
-
-### Tiny DAL trace
+The data path is separate from the visual path:
 
 ```text
 request.yml
-  → filestore/load.ts
-  → lang/parse.ts
+  → parse and validate
   → Collection state
-  → draft hook
-  → requests/send.ts
-  → SendState
+  → draft/edit state
+  → request executor
+  → response state
   → ResponsePane
 ```
 
-| Concern | Noodle pattern | What to borrow for torrent-tui |
+### What each layer owns
+
+| Layer | Responsibility | Important behavior | torrent-tui translation |
+|---|---|---|---|
+| `schema/` | Domain types such as `Request`, `Collection`, `Response`, `Environment`, and `NetworkEvent`. | No React or terminal dependency. Unions describe valid states. | Keep Transmission RPC result types independent from UI props. |
+| `lang/` | YAML parsing and serialization. | Rejects invalid or unknown request fields at the boundary. | Validate RPC payload/result shapes once instead of casting raw JSON everywhere. |
+| `filestore/` and `env/` | Collection files, settings, environments, and UI state. | Directory walking, path validation, sorting, error collection, and atomic settings writes. | Keep local preferences separate from Transmission's authoritative daemon state. |
+| `requests/` | HTTP execution and variable substitution. | Handles timeout, cancellation, redirects, cookies, proxy/TLS policy, and network events. | `src/transmission/client.ts` should remain the single RPC boundary. |
+| `hooks/` | React state and asynchronous orchestration. | Loading, drafts, edit modes, cancellation, caching, and subscriptions live here. | Add a hook around polling/actions before adding a global store. |
+| `ui/` | OpenTUI components, layout, focus, commands, themes, and overlays. | Components render state and call callbacks; they do not own the network. | Build the torrent list/details shell first. |
+| `app/` | CLI dispatch and renderer bootstrap. | TUI, import/export, update, and automation commands are separate entry paths. | Keep the first version's bootstrap small; do not copy every subcommand. |
+| `tests/` | Pure helpers, in-memory renderer tests, component tests, and isolated integration tests. | Uses Bun's test runner and destroys renderers after tests. | Keep renderer tests separate from Transmission integration tests. |
+
+### Startup, in plain language
+
+1. `src/app/cli.ts` parses arguments with Citty. An unqualified path or TUI
+   flag is routed to the default TUI command; other names route to import,
+   export, update, agent, or automation commands.
+2. `src/app/main.tsx` loads global config, selects the collection directory,
+   classifies it as collection/browse/empty/invalid, loads environments and
+   settings, creates the renderer, and mounts React.
+3. The renderer is created with Ctrl+C handling disabled so the app can first
+   copy a selection or flush resources. Shutdown eventually calls
+   `renderer.destroy()`, which releases the terminal.
+4. `App` owns global config and the active theme. `AppInner` owns cross-view
+   state, refs, effects, command actions, and overlay visibility.
+5. `MainView` chooses the folder or request workspace. The request workspace
+   contains a sidebar, URL bar, request pane, response pane, and status bar.
+
+## Session 1 — runtime, data, and the small DAL
+
+| Topic | Relevant information to understand | Verification |
 |---|---|---|
-| Network | `fetch` lives in the executor, not in visual components. | Keep Transmission RPC in one client module. Components call named actions such as list/start/stop. |
-| Cancellation | `AbortController` cancels active work; aborted sends return to idle. | Cancel stale refreshes when changing views or shutting down. |
-| Progress | `onNetworkEvent` updates the sending state before the final response exists. | Show connection/refresh status without blocking the renderer. |
-| Non-network I/O | File walking and parsing happen behind `filestore` and `lang` modules. | Keep config/UI-state I/O separate from daemon state. |
-| Errors | File and network errors are normalized at the boundary, then rendered as state. | Avoid `try/catch` copies in every pane. |
-| Long-running work | Noodle's HTTP request is finite; the TUI remains a client. | Transmission remains the long-running torrent owner; the TUI must not become the engine. |
+| Running Noodle | It is a Bun/TypeScript/React/OpenTUI app. `bun run dev -- --collection ./collections --env development` starts the TUI. `bun test`, `bun run typecheck`, `bun run lint`, and `bun run build:bin` cover tests, types, lint, and a compiled binary. | Explain what runs in development and which process owns the terminal. |
+| CLI modes | The default command opens the TUI. `--collection` or a positional path selects data, `--env` selects an environment, and `--noproxy` / `--insecure` apply one-run network overrides. Other commands perform automation without a TUI. | Explain why CLI parsing is outside React and why automation can reuse the same service layer. |
+| Request model | A request contains method, URL, timeout, headers, params, body, auth, tags, assertions, and optional captures. `Auth`, body type, and form entries are typed unions/records rather than unstructured UI data. | Identify which fields belong in a future torrent view model and which are Noodle-specific. |
+| File model | A collection has `settings.yml`, request `.yml` files, optional `folder.yml` overrides, `.environments/*.env`, hidden `.noodle/ui-state.yml`, and optional `.timeline/` history. Request IDs are relative paths without `.yml`. | Explain why a file path is not the same thing as a user-facing label. |
+| Collection loading | `walk()` resolves real paths, rejects symlink escapes, skips hidden and known state directories, parses folders/requests, collects file errors, then sorts folders by sequence/name and requests alphabetically. | Draw the load flow without opening the implementation. |
+| Persistence safety | Request/folder writes are direct; environment/settings writes use temporary files followed by rename. Save/delete paths reject empty, absolute, traversal, and backslash-containing IDs. | Name one operation that needs atomic replacement and one that needs destructive-action confirmation. |
+| Environments | `.env` files provide variables; disabled variables remain declared; secret declarations resolve from the process or OS vault. Substitution happens before execution, while sensitive values are redacted at output boundaries. | Explain why credentials should not be stored in torrent UI state or RPC logs. |
+| Request execution | `requests/send.ts` prepares the effective request, calls `fetch`, records network events, follows supported redirects, applies policy, and returns a response. `useResponse` exposes `idle`, `sending`, `done`, and `error`; an `AbortController` cancels active work. | Describe what the UI can show while a request is still running and what happens after cancellation. |
 
-For the Transmission-specific prerequisite, continue with
-[`docs/transmission-study-plan.md`](./transmission-study-plan.md). In
-particular, keep the RPC session-token handshake and daemon ownership there;
-Noodle only supplies client-side UI and async-state lessons.
+### Small DAL trace for torrent-tui
 
-## Session 2 — state and visual composition
+The useful pattern is smaller than Noodle's REST executor:
 
-| Order | Read | What to learn | Verify before continuing | torrent-tui impact |
-|---|---|---|---|---|
-| 6. Collection and draft state | [`src/hooks/useCollection.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/useCollection.ts), [`src/hooks/useRequestDraft.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/useRequestDraft.ts), [`src/hooks/useEditBrowse.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/useEditBrowse.ts), [`src/hooks/requestDraftReducer.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/requestDraftReducer.ts) | Hooks own state transitions while components receive data and callbacks. Browse/edit modes prevent every keystroke from becoming a disk write. | Explain original data vs draft data, commit vs cancel, dirty state, and why refs are used alongside React state. | Start with direct React state in the current two-file app. Add a shared store only when engine events and several views need the same snapshot. |
-| 7. UI leaf primitives | [`src/ui/Frame.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Frame.tsx), [`src/ui/borders.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/borders.ts), [`src/ui/Badge.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Badge.tsx), [`src/ui/Tabs.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Tabs.tsx), [`src/ui/format.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/format.ts) | Small reusable framing, border, badge, tab, and formatting pieces remove visual drift without creating a design system. | Identify which primitive owns border characters, title placement, focus color, and display truncation. | Adopt one small `Frame`-style primitive once the torrent screen has more than one pane. Do not create a component library before repetition appears. |
-| 8. Layout shell | [`src/ui/MainView.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/MainView.tsx), [`src/ui/RequestResponseView.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/RequestResponseView.tsx), [`src/ui/Sidebar.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Sidebar.tsx), [`src/ui/Header.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Header.tsx), [`src/ui/StatusBar.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/StatusBar.tsx) | Sidebar + workspace composition, stacked/side-by-side panes, minimum sizes, resize handles, contextual footer hints, and narrow-terminal behavior. | Sketch the component tree and mark which boxes grow, shrink, scroll, or own focus. Resize the terminal and identify what must remain visible. | Use one dense shell: torrent list, details pane, and status line. Prefer `gap: 0`, `flexGrow`, `minWidth: 0`, and `minHeight: 0` over decorative spacing. |
-| 9. Request/response panes | [`src/ui/RequestPane.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/RequestPane.tsx), [`src/ui/ResponsePane.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/ResponsePane.tsx), [`src/ui/KeyValueSection.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/KeyValueSection.tsx), [`src/ui/EmptyState.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/EmptyState.tsx) | Pane-level rendering, tabs, empty/loading/error states, and keeping large content inside scrollable regions. | For each pane, name its input state, user action, and output state. Confirm no network call is started from render code. | Keep torrent details read-only first; add edit controls only for real Transmission mutations with confirmation requirements. |
-| 10. Theme and terminal styling | [`src/ui/theme-data.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/theme-data.ts), [`src/ui/theme.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/theme.tsx), OpenTUI [layout](https://opentui.com/docs/core-concepts/layout/), [components](https://opentui.com/docs/components/), and [React bindings](https://opentui.com/docs/bindings/react/) | Semantic colors, terminal-cell sizing, Yoga-style flex layout, and style props instead of browser CSS. | Produce a five-color semantic palette: background, panel, text, muted text, and active/accent. Test it on a dark terminal and a narrow terminal. | Start with one theme and semantic names. Add theme selection only after contrast and state hierarchy are correct. |
+```text
+TransmissionClient
+  → typed SessionInfo / TorrentList / TorrentAddResult
+  → React state or hook
+  → list/details components
+```
 
-### UI rules worth copying
+Keep these responsibilities distinct:
 
-| Pattern | Why it has impact |
+| Responsibility | Put it here | Do not put it here |
+|---|---|---|
+| RPC URL, JSON-RPC envelope, session ID, HTTP errors, result decoding | `src/transmission/client.ts` | JSX event handlers and individual panes |
+| Session/torrent response shapes | `src/transmission/types/` | `Record<string, unknown>` throughout the UI |
+| Polling, cancellation, loading/error state | A hook or one small app-level controller | `setInterval` scattered across components |
+| Selection, cursor, active pane, modal state | UI state | Transmission client |
+| Torrent truth and long-running download process | `transmission-daemon` | The TUI process |
+
+Noodle's extra OAuth, cookie, proxy, TLS, timeline, and assertion machinery is
+useful as boundary-design inspiration, but it is not required for the first
+torrent client.
+
+## Session 2 — how the clean UI is built
+
+### React/OpenTUI composition
+
+OpenTUI JSX is not browser DOM. `<box>`, `<text>`, `<input>`, and
+`<scrollbox>` become terminal renderables. Layout uses Yoga-like flex sizing
+and terminal-cell dimensions; there is no CSS stylesheet or browser box model.
+
+The practical component hierarchy is:
+
+```text
+App
+└── AppInner
+    ├── Header
+    ├── MainView
+    │   ├── Sidebar
+    │   └── RequestResponseView
+    │       ├── UrlBar
+    │       ├── RequestPane
+    │       └── ResponsePane
+    ├── AppOverlays
+    └── StatusBar
+```
+
+`App` is the global wiring layer. `AppInner` is the coordinator. Leaf panes
+receive values and callbacks. This keeps visual files from knowing how files
+are loaded or how requests are sent.
+
+### Layout rules that create the Noodle feel
+
+| Rule | What it prevents or enables |
 |---|---|
-| No gaps between adjacent panels | Preserves scarce terminal columns and makes the app feel like one workspace rather than cards. |
-| `flexGrow` plus `minWidth: 0` / `minHeight: 0` | Lets panes actually shrink inside nested flex containers instead of overflowing or stealing the viewport. |
-| One reusable frame with active/inactive border colors | Focus is visible without repainting every child component's colors. |
-| Scrollboxes for lists and response content | Large collections remain usable while the outer shell stays fixed. |
-| Semantic theme fields | Components ask for `theme.primary` or `theme.error`, not scattered color literals. |
-| Status-bar hint fitting | The footer remains useful at normal widths and degrades gracefully on small terminals. |
-| Explicit empty/loading/error states | A clean TUI communicates what is happening instead of leaving blank panes. |
+| Use rows/columns with `flexGrow: 1` | The main workspace consumes available terminal space. |
+| Use `minWidth: 0` and `minHeight: 0` on shrinking nested panes | Text or a child pane does not force the whole layout wider/taller than the terminal. |
+| Use `gap: 0` between adjacent panels | The UI stays dense and information-rich. |
+| Give lists/content their own `scrollbox` | The shell stays fixed while torrents, files, peers, or response text scroll. |
+| Keep a minimum pane size | A split view remains usable rather than collapsing into unreadable cells. |
+| Put resize handles between panes | Users can choose whether list or detail information gets more space. |
+| Fit or hide status hints at narrow widths | Short terminals still show state instead of wrapping the footer into noise. |
 
-## Session 3 — interaction, runtime, and verification
+Noodle's main workspace is a sidebar plus a growing content area. The content
+can stack request and response vertically or place them side by side. A split
+ratio is clamped to minimum widths/heights, and a double-click restores the
+default ratio.
 
-| Order | Read | What to learn | Verify before continuing | torrent-tui impact |
-|---|---|---|---|---|
-| 11. Focus and local interaction | [`src/ui/focus.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/focus.ts), [`src/ui/tree.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/tree.ts), [`src/ui/selection.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/selection.ts), [`src/ui/useJumpMode.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/useJumpMode.ts) | Focus is modeled explicitly; visible tree items, cursor position, and jump targets are separate concepts. | Draw the focus cycle and state what happens when a selected item disappears or a pane is expanded. | Use a small explicit focus union for list/details/status/modal states. Do not infer focus from incidental component mounting. |
-| 12. Keybind model | [`src/ui/keybind.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/keybind.ts), [`src/ui/useAppKeymap.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/useAppKeymap.ts), [`src/ui/keymap/layers.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/keymap/layers.ts), [`src/ui/keymap/globalLayers.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/keymap/globalLayers.ts), OpenTUI [keyboard](https://opentui.com/docs/core-concepts/keyboard/) and [keymap](https://opentui.com/docs/keymap/overview/) docs | Named commands, focus/mode conditions, layer priority, fixed vs configurable bindings, and the difference between direct handlers and a shared keymap. | For one key, identify its active layer, enabled condition, command, and propagation behavior. | Direct `useKeyboard` is enough for the current starter. Add `@opentui/keymap` only when several views share commands or mode priority becomes hard to see. |
-| 13. Overlays and commands | [`src/ui/overlays/Overlay.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/overlays/Overlay.tsx), [`src/ui/overlays/PickerOverlay.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/overlays/PickerOverlay.tsx), [`src/ui/overlays/CommandPaletteOverlay.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/overlays/CommandPaletteOverlay.tsx), [`src/ui/commands.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/commands.ts), [`src/ui/commandActions.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/commandActions.ts) | One modal container, keyboard isolation, reusable searchable pickers, and command actions shared by palette and keymap. | Open an overlay, press an unused key, and confirm the background does not act. Close it with Escape and verify focus returns. | Use one confirmation/modal mechanism for destructive torrent actions. Defer a command palette until there are enough commands to justify it. |
-| 14. Runtime wiring | [`src/app/cli.ts`](https://github.com/wilfredinni/noodle/blob/main/src/app/cli.ts), [`src/app/commands/default.ts`](https://github.com/wilfredinni/noodle/blob/main/src/app/commands/default.ts), [`src/app/main.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/app/main.tsx), [`src/ui/App.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/App.tsx), [`src/ui/AppInner.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/AppInner.tsx), [`src/ui/AppOverlays.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/AppOverlays.tsx) | The final top-down startup path: CLI classification → bootstrap → renderer/providers → root app → orchestration → views/overlays. | Explain renderer ownership and every shutdown path. Confirm `renderer.destroy()` restores the terminal and the TUI does not own the long-running backend. | Keep `src/index.tsx` as the renderer owner initially. Split bootstrap, orchestration, and views only when the current file actually becomes difficult to change. |
-| 15. Tests and visual checks | [`tests/testRender.ts`](https://github.com/wilfredinni/noodle/blob/main/tests/testRender.ts), representative [`MainView` tests](https://github.com/wilfredinni/noodle/blob/main/tests/unit/MainView.test.tsx), [`Frame` tests](https://github.com/wilfredinni/noodle/blob/main/tests/unit/Frame.test.tsx), [`Overlay` tests](https://github.com/wilfredinni/noodle/blob/main/tests/unit/Overlay.test.tsx), [`requests` tests](https://github.com/wilfredinni/noodle/blob/main/tests/requests.test.ts) | In-memory rendering, frame assertions, input simulation, pure-helper tests, and self-contained network tests. | Test one layout frame, one overlay isolation case, one key action, one cancellation/error path, and one file/RPC boundary. | For non-trivial torrent UI logic, leave one runnable check behind; do not build a test framework or fixtures before the first behavior exists. |
+### Visual language
 
-### Representative keybinds
+Noodle uses a small semantic palette rather than arbitrary colors in every
+component:
 
-This is a study subset, not a replacement for Noodle's definitions. Verify the
-current values in [`src/ui/keybind.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/keybind.ts).
-
-| Context | Keys | Impact |
-|---|---|---|
-| Global navigation | `Tab`, `Shift+Tab`, `F1`, `Ctrl+P`, `g` | A small, discoverable command vocabulary beats many undocumented single-key actions. |
-| Workspace layout | `Ctrl+L`, `F2` | Layout and focused-pane expansion are separate state transitions. |
-| Request actions | `Ctrl+Enter`, `Ctrl+S`, `Return`, `Ctrl+E` | Sending, saving, browsing, and editing have different safety levels. |
-| Workspace selection | `Ctrl+O`, `F3`, `F4`, `Ctrl+T` | Separate navigation into collections, environments, settings, and themes. |
-| Modal interaction | arrows, `Return`, `Escape` | The active overlay must intercept keys before background panes. |
-
-## Code style observations
-
-| Observation | What to look for |
+| Token | Meaning |
 |---|---|
-| Strict TypeScript | Named exports, explicit unions, local prop interfaces, and typed callbacks make UI state readable. |
-| Pure helpers before JSX | Width clamps, URL formatting, selection, tree flattening, and status formatting stay testable without a renderer. |
-| Hooks own effects | Loading, saving, cancellation, persistence, and subscriptions live in hooks or service modules; components mostly compose and render. |
-| Refs supplement state | Refs expose current state to key commands and prevent stale async callbacks without forcing every command through a render. |
-| UI is not browser UI | OpenTUI JSX maps to terminal renderables; use `style`, flex layout, cell widths, borders, and scrollboxes rather than CSS assumptions. |
-| Central orchestration has a ceiling | `AppInner.tsx` is intentionally the cross-view coordinator. Learn its boundaries, but do not recreate its scale in a two-file starter. |
-| Boundary errors are explicit | Parse errors, network errors, cancellation, and shutdown cleanup each have a visible owner. |
+| `background`, `backgroundPanel`, `backgroundElement` | Terminal, pane, and selected/hovered surfaces. |
+| `text`, `textMuted` | Primary and secondary information. |
+| `primary`, `accent` | Focus, active tabs, selection, and important actions. |
+| `success`, `warning`, `error`, `info` | State communication. |
+| `border`, `borderActive`, `borderSubtle` | Structural and focus borders. |
 
-## Six small code excerpts to study
+`Frame` centralizes border/title placement. `FullBorder`, `LeftBar`, and
+`PaneBorder` provide consistent border shapes. Focus normally changes the
+frame border to `theme.primary`; children do not each invent a focus color.
 
-These excerpts are intentionally short. Read the linked files around them; the
-point is the design decision, not memorizing syntax.
+Tabs are compact, horizontally scrollable, and use active color plus a bottom
+rule. Status bars combine request state, environment, errors, and only the
+most useful contextual shortcuts. Empty, loading, and error states are
+deliberate screens, not accidental blank space.
 
-1. **Renderer ownership** — [`src/app/main.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/app/main.tsx)
+### State and interaction boundaries
 
-   ```tsx
-   const renderer = await createCliRenderer({ exitOnCtrlC: false })
-   createRoot(renderer).render(...)
-   ```
+- `useCollection` loads asynchronously and ignores late results after the
+  component is cancelled.
+- `useRequestDraft` keeps original and unsaved request values separate, which
+  makes dirty indicators, cancel, and save predictable.
+- `useEditBrowse` models browsing versus editing. Arrow navigation does not
+  automatically write to disk; commit and cancel are explicit.
+- Refs mirror important current values for commands and async callbacks where
+  waiting for a React render would create stale state.
 
-   The code that creates the renderer owns terminal startup and cleanup.
+For torrent-tui, the equivalent first state model can be much smaller:
 
-2. **Dense flex layout** — [`src/ui/MainView.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/MainView.tsx)
+```text
+selected torrent + cursor
+  → active pane
+  → loading/error/last refresh
+  → optional confirmation modal
+```
 
-   ```tsx
-   style={{
-     flexDirection: "row",
-     flexGrow: 1,
-     gap: 0,
-     minHeight: 0,
-   }}
-   ```
+Do not introduce a global store until the same engine snapshot is consumed by
+several independent views.
 
-   The important trick is not the row; it is allowing nested panes to grow and
-   shrink without wasting terminal cells.
+## Session 3 — keybinds, overlays, and code quality
 
-3. **Focus as color** — [`src/ui/Sidebar.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Sidebar.tsx)
+### Keybind model
 
-   ```tsx
-   borderColor={focused ? theme.primary : theme.borderSubtle}
-   ```
+Noodle treats a shortcut as named metadata: default key, description, category,
+contexts, and whether the user may override it. The keymap then activates
+layers according to focus, view, edit mode, and overlay state.
 
-   Focus is a stable visual signal applied at the frame boundary.
-
-4. **Modal layering** — [`src/ui/overlays/Overlay.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/overlays/Overlay.tsx)
-
-   ```tsx
-   zIndex: 10000,
-   backgroundColor: RGBA.fromInts(0, 0, 0, 150),
-   ```
-
-   A dimmed, high-priority layer makes modal ownership obvious.
-
-5. **Named binding metadata** — [`src/ui/keybind.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/keybind.ts)
-
-   ```ts
-   return { default: value, description, fixed, category, contexts }
-   ```
-
-   A shortcut is documented data, not an unexplained event branch.
-
-6. **Cancellation handle** — [`src/hooks/useResponse.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/useResponse.ts)
-
-   ```ts
-   const controller = new AbortController()
-   abortRef.current = controller
-   ```
-
-   The hook keeps a direct handle for cancelling work that outlives one render.
-
-## Recommendations for the real torrent-tui
-
-| Decision | Recommendation | Trigger for changing it |
+| Context | Representative keys | Meaning |
 |---|---|---|
-| Semantic palette | **Adopt now.** Define a small palette for background, panel, text, muted text, active, success, warning, and error. | Add user-selectable themes only after the first palette has good contrast. |
-| Application shell | **Adopt now.** Use a dense list/details shell with an always-visible status line. | Add additional workspaces only when a real feature needs them. |
-| Pane framing | **Adopt when the second pane exists.** Centralize border characters and active/inactive focus color. | Extract more primitives only when the same markup repeats. |
-| Scrolling | **Adopt for torrent/file/peer lists.** Keep outer layout fixed and scroll only content regions. | Add virtualization or custom renderables only after large collections show a measured problem. |
-| Async RPC | **Adopt now.** Keep the Transmission client outside JSX; model idle/loading/success/error and cancellation explicitly. | Add polling throttling or a shared external store only when refresh frequency or consumers require it. |
-| Keymap | **Use direct handlers first.** `@opentui/keymap` is not currently installed here. | Add it when multiple views share commands, modes, priorities, or configurable shortcuts. |
-| Command palette | **Defer.** A few torrent actions do not need a searchable command registry. | Add it after commands become numerous or discoverability becomes a problem. |
-| Theme catalog | **Defer.** Noodle's many themes are product polish, not the first UI milestone. | Add a picker after the semantic palette and focus hierarchy are stable. |
-| Persistence | **Keep minimal.** Persist only useful UI preferences such as selected torrent or layout. | Add a file-backed settings module when a preference must survive restart. |
-| Noodle DAL features | **Avoid copying.** OAuth, cookies, importers, code generation, YAML editors, and timeline storage do not belong in the first torrent client. | Add a feature only when a torrent-tui requirement—not repository admiration—demands it. |
-| Process ownership | **Keep Transmission external.** The TUI is an RPC client and must not stop the daemon on ordinary exit. | Revisit only if the product explicitly becomes a torrent engine. |
+| Global navigation | `Tab`, `Shift+Tab`, `F1`, `Ctrl+P`, `g` | Move focus, show help/commands, or jump directly to a target. |
+| Workspace | `Ctrl+L`, `F2` | Toggle stacked/side-by-side layout or expand the focused pane. |
+| Request | `Ctrl+Enter`, `Ctrl+S`, `Return`, `Ctrl+E` | Send, save, enter browse/edit, or open YAML editing. |
+| Workspace selection | `Ctrl+O`, `F3`, `F4`, `Ctrl+T` | Collections, environments, settings, and themes. |
+| Overlay | arrows, `Return`, `Escape` | Navigate/select/close without allowing the background to act. |
+
+Use direct keyboard handlers when one component owns a small local behavior.
+Use `@opentui/keymap` when commands are shared across panes, have priorities,
+need mode/focus conditions, or must appear in help and a command palette.
+
+For the current torrent-tui starter, direct handlers are enough. The existing
+dependency list does not include `@opentui/keymap`; adding it only to resemble
+Noodle would be unnecessary complexity.
+
+### Overlay pattern
+
+Noodle has one generic modal container and builds pickers, confirmations, help,
+theme selection, and the command palette on top of it. The container:
+
+1. renders through a portal at the renderer root;
+2. covers the screen with a dim background and high z-index;
+3. centers a panel with the active theme;
+4. installs a higher-priority keyboard interceptor;
+5. returns focus when closed.
+
+For torrent-tui, reuse this idea for delete-data and stop/confirm actions
+before building a searchable command palette.
+
+### Code style to copy
+
+| Noodle habit | Why it matters |
+|---|---|
+| Strict TypeScript and named exports | Data flow is visible in imports and types. |
+| Pure helpers before JSX | Width clamping, formatting, selection, and tree logic are easy to test. |
+| Hooks/services own effects | Components stay mostly declarative. |
+| Small reusable primitives | Borders, tabs, badges, and empty states stay visually consistent. |
+| Boundary validation and normalized errors | Failure handling is not duplicated across panes. |
+| Explicit cleanup | Renderer, signal, timer, subscription, and abort resources have owners. |
+| No speculative abstraction | Noodle's scale is a reason to study boundaries, not to reproduce every module. |
+
+### Tests and visual verification
+
+Noodle uses Bun's built-in test runner. Its useful test categories are:
+
+- pure helper tests for formatting, selection, tree, parsing, and keybinds;
+- in-memory OpenTUI renderer tests that capture a character frame;
+- input tests for focus, overlays, and keymap isolation;
+- filesystem tests using temporary directories;
+- isolated HTTP loopback tests for request behavior.
+
+For torrent-tui, the first meaningful checks are one unit test for RPC result
+decoding/error handling, one renderer test for the list/details frame, and one
+interaction test proving a destructive action requires confirmation. Keep
+Transmission integration tests separate and do not require a running daemon in
+unit tests.
+
+## Six short excerpts worth studying
+
+These snippets contain the important tricks; the surrounding source is
+optional context.
+
+### 1. Renderer ownership
+
+From [`src/app/main.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/app/main.tsx):
+
+```tsx
+const renderer = await createCliRenderer({ exitOnCtrlC: false })
+createRoot(renderer).render(...)
+```
+
+The code that creates the renderer owns terminal cleanup.
+
+### 2. Dense nested layout
+
+From [`src/ui/MainView.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/MainView.tsx):
+
+```tsx
+style={{
+  flexDirection: "row",
+  flexGrow: 1,
+  gap: 0,
+  minHeight: 0,
+}}
+```
+
+`minHeight: 0` is the subtle part: it allows a growing child to shrink inside
+the available terminal height.
+
+### 3. Focus as a frame signal
+
+From [`src/ui/Sidebar.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/Sidebar.tsx):
+
+```tsx
+borderColor={focused ? theme.primary : theme.borderSubtle}
+```
+
+The pane communicates focus at its boundary instead of recoloring every row.
+
+### 4. Modal ownership
+
+From [`src/ui/overlays/Overlay.tsx`](https://github.com/wilfredinni/noodle/blob/main/src/ui/overlays/Overlay.tsx):
+
+```tsx
+zIndex: 10000,
+backgroundColor: RGBA.fromInts(0, 0, 0, 150),
+```
+
+The dim layer makes it visually and behaviorally clear that the background is
+inactive.
+
+### 5. Shortcut metadata
+
+From [`src/ui/keybind.ts`](https://github.com/wilfredinni/noodle/blob/main/src/ui/keybind.ts):
+
+```ts
+return { default: value, description, fixed, category, contexts }
+```
+
+Keybinds can power dispatch, help text, and configurable shortcuts from one
+definition.
+
+### 6. Cancellation handle
+
+From [`src/hooks/useResponse.ts`](https://github.com/wilfredinni/noodle/blob/main/src/hooks/useResponse.ts):
+
+```ts
+const controller = new AbortController()
+abortRef.current = controller
+```
+
+The hook keeps a direct handle for cancelling work that outlives one render.
+
+## What to adopt in torrent-tui
+
+| Timing | Adopt | Why |
+|---|---|---|
+| Now | Keep `TransmissionClient` outside JSX and return typed results. | One RPC boundary, one error policy. |
+| Now | Model loading, refresh failure, empty data, and selected torrent explicitly. | The UI always communicates state. |
+| Now | Use a dense list/details layout with `gap: 0`, `flexGrow`, and minimum sizes. | It matches terminal constraints and Noodle's visual strength. |
+| Now | Use a small semantic color palette and an always-visible status line. | Focus and daemon connectivity remain legible. |
+| Now | Use `AbortController` for refresh/action cancellation and destroy the renderer on exit. | Prevents stale results and terminal corruption. |
+| When panes repeat | Extract a tiny `Frame`/border primitive. | Removes visual drift without a design system. |
+| When commands multiply | Add `@opentui/keymap`, named commands, and perhaps a palette. | Shared mode-aware dispatch then pays for itself. |
+| When persistence is needed | Persist only layout/selection preferences. | Do not duplicate Transmission's torrent database. |
+| Defer | 34-theme catalog, code editor, timeline, cookies, OAuth, converters, secrets vault, update flow, and automation commands. | They solve Noodle product needs, not the first torrent UI need. |
 
 ## Completion checklist
 
-- [ ] Explain the bottom-up dependency flow from schema to UI.
-- [ ] Explain the top-down startup flow from CLI to renderer and root app.
-- [ ] Sketch the file/request/response path without opening every Noodle file.
-- [ ] Explain why `gap: 0`, minimum sizes, scrollboxes, and semantic colors matter in a terminal.
-- [ ] Trace one key through its context, layer, command, and overlay priority.
-- [ ] Demonstrate one cancelled async operation and one rendered error state.
-- [ ] Choose at least three Noodle patterns to adopt and three to defer in torrent-tui.
-- [ ] Revisit the existing [Transmission study plan](./transmission-study-plan.md) before designing daemon-facing architecture.
+- [ ] Explain the bottom-up path: types → parsing → I/O → RPC → hooks → UI.
+- [ ] Explain the top-down path: CLI → bootstrap → renderer → `App` → views.
+- [ ] Draw the two data flows from memory.
+- [ ] Explain why `gap: 0`, `minHeight: 0`, scrollboxes, semantic colors, and active borders matter.
+- [ ] Trace `Ctrl+Enter` or `Tab` through focus/context and command handling.
+- [ ] Explain why an overlay must intercept input before the background.
+- [ ] State which Noodle features are adopted now, later, and deferred.
+- [ ] Continue the Transmission-specific work in [`docs/transmission-study-plan.md`](./transmission-study-plan.md).
 
-## Reference commands
+## Optional source map
 
-Run these from a separate checkout of Noodle, not from this project:
+Use these only when the condensed explanations leave a question:
 
-```bash
-bun install
-bun run dev -- --collection ./collections --env development
-bun test
-bun run typecheck
-bun run lint
-bun run build:bin
-```
-
-Use the sample collection for observation. The study does not require adding
-Noodle dependencies to `torrent-tui`.
+- [Noodle README](https://github.com/wilfredinni/noodle)
+- [Noodle architecture notes](https://github.com/wilfredinni/noodle/blob/main/.agents/skills/noodle-dev/architecture.md)
+- [OpenTUI React bindings](https://opentui.com/docs/bindings/react/)
+- [OpenTUI layout](https://opentui.com/docs/core-concepts/layout/)
+- [OpenTUI keyboard](https://opentui.com/docs/core-concepts/keyboard/)
+- [OpenTUI keymap](https://opentui.com/docs/keymap/overview/)
