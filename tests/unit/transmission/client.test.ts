@@ -155,13 +155,34 @@ describe("TransmissionClient operations", () => {
 		};
 		const requests = stubFetch([jsonResponse({ result: addResult })]);
 
-		const result = await new TransmissionClient().addTorrent(
-			"/tmp/example.torrent",
-		);
+		const result = await new TransmissionClient().addTorrent({
+			filename: "/tmp/example.torrent",
+		});
 
 		expect(result).toEqual(addResult);
 		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
 			filename: "/tmp/example.torrent",
+			paused: true,
+		});
+	});
+
+	test("adds base64 metainfo paused and returns the server result", async () => {
+		const addResult = {
+			torrent_added: {
+				id: 1,
+				hash_string: "abc123",
+				name: "example.iso",
+			},
+		};
+		const requests = stubFetch([jsonResponse({ result: addResult })]);
+
+		const result = await new TransmissionClient().addTorrent({
+			metainfo: "dG9ycmVudCBieXRlcw==",
+		});
+
+		expect(result).toEqual(addResult);
+		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
+			metainfo: "dG9ycmVudCBieXRlcw==",
 			paused: true,
 		});
 	});

@@ -1,5 +1,9 @@
 import type { SessionInfo } from "./types/session";
-import type { TorrentAddResult, TorrentList } from "./types/torrent";
+import type {
+	TorrentAddResult,
+	TorrentAddSource,
+	TorrentList,
+} from "./types/torrent";
 
 type TransmissionMethod =
 	| "session_get"
@@ -141,9 +145,9 @@ export class TransmissionClient {
 		});
 	}
 
-	addTorrent(source: string): Promise<TorrentAddResult> {
+	addTorrent(source: TorrentAddSource): Promise<TorrentAddResult> {
 		return this.rpcCall<TorrentAddResult>("torrent_add", {
-			filename: source,
+			...source,
 			paused: true,
 		});
 	}
