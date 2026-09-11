@@ -24,12 +24,28 @@ bunx tsc --noEmit
 
 ```text
 src/
-├── index.tsx                         # OpenTUI application bootstrap
-└── transmission/
-    ├── client.ts                     # Transmission RPC client and session handling
-    └── types/
-        ├── session.ts                # Transmission session response types
-        └── torrent.ts                # Torrent list, reference, and add-result types
+├── index.tsx                         # Select and start the application entry point
+├── app/
+│   └── main.tsx                      # Create the renderer and mount the TUI
+├── torrent/
+│   ├── actions.ts                    # Coordinate torrent mutations and list refreshes
+│   └── source.ts                     # Resolve local and remote torrent sources
+├── transmission/
+│   ├── client.ts                     # Transmission RPC client and session handling
+│   └── types/
+│       ├── session.ts                # Transmission session response types
+│       └── torrent.ts                # Torrent list, reference, and add-source types
+└── ui/
+    ├── app.tsx                       # Render the shell and own the quit boundary
+    ├── app-inner.tsx                 # Render the current main content area
+    ├── borders.ts                    # Shared border presets
+    ├── footer.tsx                    # Render footer key hints
+    ├── frame.tsx                     # Render titled content frames
+    ├── header.tsx                    # Render the application header
+    ├── keybinds.ts                   # Define shell key hints
+    ├── progress-bar.tsx              # Render compact torrent progress
+    ├── theme.ts                      # Define Tokyo Night theme values
+    └── torrent-list.tsx              # Render the torrent list and rows
 
 tests/                                # Unit and future integration tests
 ```
