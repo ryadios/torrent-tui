@@ -2,37 +2,60 @@ import { useTerminalDimensions } from "@opentui/react";
 import { keybinds } from "./keybinds";
 import { theme } from "./theme";
 
-export function Footer() {
+type FooterProps = {
+	hasSelection?: boolean;
+	status?:
+		| { kind: "idle" }
+		| { kind: "busy"; message: string }
+		| { kind: "message"; message: string; tone: "error" | "warning" };
+};
+
+export function Footer({
+	hasSelection = false,
+	status = { kind: "idle" },
+}: FooterProps) {
 	const { width } = useTerminalDimensions();
 	const compact = width < 30;
+	const hints = compact
+		? [keybinds.quit]
+		: [
+				...(hasSelection ? [keybinds.start, keybinds.stop] : []),
+				keybinds.refresh,
+				keybinds.quit,
+			];
 
 	return (
 		<box
 			flexDirection="row"
 			flexShrink={0}
+			justifyContent="space-between"
 			backgroundColor={theme.backgroundPanel}
 			paddingX={1}
 		>
-			<text fg={theme.primary} selectable={false}>
-				{keybinds.quit.key}
-			</text>
-			<text fg={theme.textMuted} selectable={false}>
-				{` ${keybinds.quit.label}`}
-			</text>
-
-			{compact ? null : (
-				<>
-					<text fg={theme.textMuted} selectable={false}>
-						{"  "}
-					</text>
-					<text fg={theme.primary} selectable={false}>
-						{keybinds.interrupt.key}
-					</text>
-					<text fg={theme.textMuted} selectable={false}>
-						{` ${keybinds.interrupt.label}`}
-					</text>
-				</>
-			)}
+			<box flexDirection="row" columnGap={2}>
+				{hints.map((hint) => (
+					<box key={hint.key} flexDirection="row">
+						<text fg={theme.primary} selectable={false}>
+							{hint.key}
+						</text>
+						<text fg={theme.textMuted} selectable={false}>
+							{` ${hint.label}`}
+						</text>
+					</box>
+				))}
+			</box>
+			{status.kind !== "idle" ? (
+				<text
+					fg={
+						status.kind === "busy"
+							? theme.textMuted
+							: theme[status.tone]
+					}
+					selectable={false}
+				>
+					{status.message}
+				</text>
+			) : null}
 		</box>
 	);
 }
