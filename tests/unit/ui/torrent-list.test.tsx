@@ -37,19 +37,38 @@ describe("TorrentList", () => {
 					}),
 				]}
 			/>,
-			{ width: 120, height: 4 },
+			{ width: 120, height: 6 },
 		);
 
 		try {
 			await setup.renderOnce();
 			const frame = setup.captureCharFrame();
+			const lines = frame.split("\n");
+			const header = lines.find((line) => line.includes("Name"));
+			const first = lines.find((line) => line.includes("First torrent"));
+			const second = lines.find((line) =>
+				line.includes("Second torrent"),
+			);
 
 			expect(frame.indexOf("First torrent")).toBeLessThan(
 				frame.indexOf("Second torrent"),
 			);
+			expect(header).toContain("Status");
+			expect(header).toContain("Progress");
+			expect(header).toContain("Download");
+			expect(header).toContain("Upload");
+			expect(first?.indexOf("Downloading")).toBe(
+				header?.indexOf("Status"),
+			);
+			expect(first?.indexOf("━━━━━━━━━━")).toBe(
+				header?.indexOf("Progress"),
+			);
+			expect(first?.indexOf("↓")).toBe(header?.indexOf("Download"));
+			expect(first?.indexOf("↑")).toBe(header?.indexOf("Upload"));
+			expect(second?.indexOf("Seeding")).toBe(header?.indexOf("Status"));
 			expect(frame).toContain("Downloading");
 			expect(frame).toContain("Seeding");
-			expect(frame).toContain("━━━━━╸──── 52%");
+			expect(frame).toContain("━━━━━━━━━━ 52%");
 			expect(frame).toContain("1.5 MiB/s");
 			expect(frame).toContain("256 B/s");
 		} finally {
@@ -75,15 +94,22 @@ describe("TorrentList", () => {
 					}),
 				]}
 			/>,
-			{ width: 120, height: 4 },
+			{ width: 120, height: 8 },
 		);
 
 		try {
 			await setup.renderOnce();
 			const frame = setup.captureCharFrame();
+			const lines = frame.split("\n");
+			const header = lines.find((line) => line.includes("Progress"));
+			const failed = lines.find((line) => line.includes("Failed"));
 
 			expect(frame).toContain("Status 99");
-			expect(frame).toContain("Error: Tracker unavailable");
+			expect(frame).not.toContain("Error: Tracker unavailable");
+			expect(failed).toContain("Error:");
+			expect(failed?.indexOf("━━━━━━━━━━")).toBe(
+				header?.indexOf("Progress"),
+			);
 			const fallbackLine = frame
 				.split("\n")
 				.find((line) => line.includes("Failed without message"));
@@ -111,7 +137,7 @@ describe("TorrentList", () => {
 					torrent({ hash_string: "hash-3", name: "Seed", status: 5 }),
 				]}
 			/>,
-			{ width: 120, height: 4 },
+			{ width: 120, height: 8 },
 		);
 
 		try {
@@ -128,19 +154,29 @@ describe("TorrentList", () => {
 		}
 	});
 
-	test("uses compact progress and hides rates below the width threshold", async () => {
+	test("uses compact columns below the width threshold", async () => {
 		const setup = await testRender(<TorrentList torrents={[torrent()]} />, {
-			width: 59,
+			width: 99,
 			height: 3,
 		});
 
 		try {
 			await setup.renderOnce();
 			const frame = setup.captureCharFrame();
+			const header = frame
+				.split("\n")
+				.find((line) => line.includes("Name"));
 
 			expect(frame).toContain("52%");
+			expect(header).toContain("Name");
+			expect(header).toContain("Status");
+			expect(header).toContain("Progress");
+			expect(header).not.toContain("Download");
+			expect(header).not.toContain("Upload");
 			expect(frame).not.toContain("━━━━");
 			expect(frame).not.toContain("MiB/s");
+			expect(frame).not.toContain("↓");
+			expect(frame).not.toContain("↑");
 		} finally {
 			act(() => setup.renderer.destroy());
 		}
@@ -155,7 +191,7 @@ describe("TorrentList", () => {
 				]}
 				selectedHash="hash-2"
 			/>,
-			{ width: 120, height: 4 },
+			{ width: 120, height: 6 },
 		);
 
 		try {
@@ -176,9 +212,9 @@ describe("TorrentList", () => {
 			);
 
 			expect(selectedLine?.includes("│")).toBe(true);
-			expect(
-				selectedBorder?.fg.equals(RGBA.fromHex(theme.borderActive)),
-			).toBe(true);
+			expect(selectedBorder?.fg.equals(RGBA.fromHex(theme.primary))).toBe(
+				true,
+			);
 			expect(
 				selectedBorder?.bg.equals(
 					RGBA.fromHex(theme.backgroundElement),

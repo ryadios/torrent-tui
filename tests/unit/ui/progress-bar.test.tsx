@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { RGBA } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { ProgressBar } from "../../../src/ui/progress-bar";
+import { theme } from "../../../src/ui/theme";
 
 describe("ProgressBar", () => {
 	test("renders a ten-cell progress rule", async () => {
@@ -12,7 +14,36 @@ describe("ProgressBar", () => {
 
 		try {
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("━━━━━╸──── 52%");
+			expect(setup.captureCharFrame()).toContain("━━━━━━━━━━ 52%");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("distinguishes completed progress with the primary color", async () => {
+		const setup = await testRender(<ProgressBar percentDone={0.52} />, {
+			width: 30,
+			height: 1,
+		});
+
+		try {
+			await setup.renderOnce();
+			const spans = setup.captureSpans().lines[0]?.spans ?? [];
+			const completed = spans.find(
+				(span) =>
+					span.text === "━━━━━" &&
+					span.fg.equals(RGBA.fromHex(theme.primary)),
+			);
+			const remaining = spans.find((span) =>
+				span.text.includes("━━━━━ 52%"),
+			);
+
+			expect(completed?.fg.equals(RGBA.fromHex(theme.primary))).toBe(
+				true,
+			);
+			expect(remaining?.fg.equals(RGBA.fromHex(theme.textMuted))).toBe(
+				true,
+			);
 		} finally {
 			act(() => setup.renderer.destroy());
 		}

@@ -1,3 +1,4 @@
+import { fg, t } from "@opentui/core";
 import { theme } from "./theme";
 
 const PROGRESS_CELLS = 10;
@@ -27,19 +28,16 @@ export function ProgressBar({
 		);
 	}
 
-	const exactFilled = progress * PROGRESS_CELLS;
-	const fullCells = Math.floor(exactFilled);
-	const hasPartialCell =
-		fullCells < PROGRESS_CELLS && exactFilled > fullCells;
-	const emptyCells = PROGRESS_CELLS - fullCells - (hasPartialCell ? 1 : 0);
-	const bar =
-		"━".repeat(fullCells) +
-		(hasPartialCell ? "╸" : "") +
-		"─".repeat(emptyCells);
+	const completedCells = Math.round(progress * PROGRESS_CELLS);
+	const completed = "━".repeat(completedCells);
+	const remaining = "━".repeat(PROGRESS_CELLS - completedCells);
 
 	return (
-		<text fg={theme.textMuted} selectable={false} wrapMode="none">
-			{`${bar} ${percentage}%`}
-		</text>
+		<text
+			content={t`${fg(theme.primary)(completed)}${fg(theme.textMuted)(`${remaining} ${percentage}%`)}`}
+			height={1}
+			selectable={false}
+			wrapMode="none"
+		/>
 	);
 }
