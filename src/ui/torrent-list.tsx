@@ -108,9 +108,9 @@ function TorrentRow({
 			id={`torrent-${torrent.hash_string}`}
 			border={["left"]}
 			customBorderChars={FullBorder.customBorderChars}
-			borderColor={selected ? theme.primary : theme.backgroundPanel}
+			borderColor={selected ? theme.primary : theme.background}
 			backgroundColor={
-				selected ? theme.backgroundElement : theme.backgroundPanel
+				selected ? theme.backgroundElement : theme.background
 			}
 			style={{
 				flexDirection: "row",

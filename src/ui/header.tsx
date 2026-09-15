@@ -11,7 +11,7 @@ export function Header() {
 		<box
 			flexDirection="row"
 			flexShrink={0}
-			backgroundColor={theme.backgroundPanel}
+			backgroundColor={theme.background}
 			paddingX={1}
 		>
 			<text
