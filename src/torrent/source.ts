@@ -4,6 +4,10 @@ import type { TorrentAddSource } from "../transmission/types/torrent";
 
 const remoteSource = /^(?:magnet:|https?:|ftp:|sftp:)/i;
 
+export function isRemoteTorrentSource(source: string): boolean {
+	return remoteSource.test(source.trim());
+}
+
 export function expandTorrentPath(source: string): string {
 	if (source === "~") return homedir();
 
@@ -19,7 +23,7 @@ export async function resolveTorrentSource(
 ): Promise<TorrentAddSource> {
 	const value = source.trim();
 
-	if (remoteSource.test(value)) {
+	if (isRemoteTorrentSource(value)) {
 		return { filename: value };
 	}
 
