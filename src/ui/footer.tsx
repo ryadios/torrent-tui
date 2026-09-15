@@ -3,6 +3,7 @@ import { keybinds } from "./keybinds";
 import { theme } from "./theme";
 
 type FooterProps = {
+	canAdd?: boolean;
 	hasSelection?: boolean;
 	status?:
 		| { kind: "idle" }
@@ -11,6 +12,7 @@ type FooterProps = {
 };
 
 export function Footer({
+	canAdd = false,
 	hasSelection = false,
 	status = { kind: "idle" },
 }: FooterProps) {
@@ -19,6 +21,7 @@ export function Footer({
 	const hints = compact
 		? [keybinds.quit]
 		: [
+				...(canAdd ? [keybinds.add] : []),
 				...(hasSelection ? [keybinds.start, keybinds.stop] : []),
 				keybinds.refresh,
 				keybinds.quit,
@@ -29,7 +32,7 @@ export function Footer({
 			flexDirection="row"
 			flexShrink={0}
 			justifyContent="space-between"
-			backgroundColor={theme.backgroundPanel}
+			backgroundColor={theme.background}
 			paddingX={1}
 		>
 			<box flexDirection="row" columnGap={2}>

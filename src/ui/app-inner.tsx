@@ -1,11 +1,13 @@
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
 import {
+	addTorrent,
 	startTorrent,
 	stopTorrent,
 	type TorrentOperations,
 } from "../torrent/actions";
 import type { TorrentSummary } from "../transmission/types/torrent";
+import { AddDialog } from "./add-dialog";
 import { Footer } from "./footer";
 import { Frame } from "./frame";
 import { keybinds } from "./keybinds";
@@ -14,6 +16,7 @@ import { TorrentList } from "./torrent-list";
 
 type AppInnerProps = {
 	operations: TorrentOperations;
+	onModalActiveChange: (active: boolean) => void;
 };
 
 type Activity =
@@ -29,7 +32,11 @@ type ListState =
 			selectedHash?: string;
 			activity: Activity;
 	  }
-	| { status: "failed" };
+	| { status: "failed"; activity: Activity };
+
+type AddState =
+	| { open: false }
+	| { open: true; pending: boolean; error?: string };
 
 function withTorrents(
 	current: ListState,
@@ -50,8 +57,9 @@ function withTorrents(
 	};
 }
 
-export function AppInner({ operations }: AppInnerProps) {
+export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	const [list, setList] = useState<ListState>({ status: "loading" });
+	const [add, setAdd] = useState<AddState>({ open: false });
 	const busy = useRef(false);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
@@ -63,7 +71,7 @@ export function AppInner({ operations }: AppInnerProps) {
 		if (!mounted.current) return;
 
 		setList((current) =>
-			current.status === "loaded"
+			current.status !== "loading"
 				? {
 						...current,
 						activity: { kind: "message", message, tone },
@@ -82,7 +90,9 @@ export function AppInner({ operations }: AppInnerProps) {
 				setList((current) => withTorrents(current, torrents));
 			})
 			.catch(() => {
-				if (active) setList({ status: "failed" });
+				if (active) {
+					setList({ status: "failed", activity: { kind: "idle" } });
+				}
 			});
 
 		return () => {
@@ -100,8 +110,9 @@ export function AppInner({ operations }: AppInnerProps) {
 
 		return () => {
 			mounted.current = false;
+			onModalActiveChange(false);
 		};
-	}, []);
+	}, [onModalActiveChange]);
 
 	async function refresh(): Promise<void> {
 		if (list.status === "loading" || busy.current) return;
@@ -124,7 +135,56 @@ export function AppInner({ operations }: AppInnerProps) {
 		} catch {
 			if (!mounted.current) return;
 			if (list.status === "loaded") showMessage("Refresh failed");
-			else setList({ status: "failed" });
+			else setList({ status: "failed", activity: { kind: "idle" } });
+		} finally {
+			busy.current = false;
+		}
+	}
+
+	function openAdd(): void {
+		if (list.status === "loading" || busy.current || add.open) return;
+		onModalActiveChange(true);
+		setAdd({ open: true, pending: false });
+	}
+
+	function closeAdd(): void {
+		if (!add.open || add.pending) return;
+		onModalActiveChange(false);
+		setAdd({ open: false });
+	}
+
+	async function submitAdd(source: string): Promise<void> {
+		if (!add.open || add.pending || busy.current) return;
+
+		busy.current = true;
+		setAdd({ open: true, pending: true });
+		setList((current) =>
+			current.status === "loading"
+				? current
+				: { ...current, activity: { kind: "idle" } },
+		);
+
+		try {
+			const outcome = await addTorrent(operations, source);
+			if (!mounted.current) return;
+
+			if (outcome.status === "refreshed") {
+				setList((current) =>
+					withTorrents(current, outcome.torrents.torrents),
+				);
+			} else {
+				showMessage("Refresh failed", "warning");
+			}
+			onModalActiveChange(false);
+			setAdd({ open: false });
+		} catch {
+			if (mounted.current) {
+				setAdd({
+					open: true,
+					pending: false,
+					error: "Unable to add torrent",
+				});
+			}
 		} finally {
 			busy.current = false;
 		}
@@ -225,6 +285,7 @@ export function AppInner({ operations }: AppInnerProps) {
 	}
 
 	useKeyboard((key) => {
+		if (add.open) return;
 		// Ignore modified shortcuts.
 		if (key.ctrl || key.meta || key.shift) return;
 		// Ignore held network shortcuts.
@@ -232,11 +293,17 @@ export function AppInner({ operations }: AppInnerProps) {
 			key.repeated &&
 			(key.name === keybinds.refresh.key ||
 				key.name === keybinds.start.key ||
-				key.name === keybinds.stop.key)
+				key.name === keybinds.stop.key ||
+				key.name === keybinds.add.key)
 		) {
 			return;
 		}
 
+		// Open the add dialog.
+		if (key.name === keybinds.add.key) {
+			openAdd();
+			return;
+		}
 		// Refresh the torrent list.
 		if (key.name === keybinds.refresh.key) {
 			void refresh();
@@ -337,13 +404,29 @@ export function AppInner({ operations }: AppInnerProps) {
 				</Frame>
 			</box>
 			<Footer
+				canAdd={list.status !== "loading"}
 				hasSelection={
 					list.status === "loaded" && list.selectedHash !== undefined
 				}
 				status={
-					list.status === "loaded" ? list.activity : { kind: "idle" }
+					list.status === "loading" ? { kind: "idle" } : list.activity
 				}
 			/>
+			{add.open ? (
+				<AddDialog
+					pending={add.pending}
+					error={add.error}
+					onSubmit={(source) => {
+						void submitAdd(source);
+					}}
+					onClose={closeAdd}
+					onClearError={() => {
+						if (add.error) {
+							setAdd({ open: true, pending: false });
+						}
+					}}
+				/>
+			) : null}
 		</box>
 	);
 }

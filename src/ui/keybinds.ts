@@ -1,4 +1,8 @@
 export const keybinds = {
+	add: {
+		key: "a",
+		label: "add",
+	},
 	start: {
 		key: "s",
 		label: "start",
