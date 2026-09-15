@@ -79,6 +79,89 @@ describe("App", () => {
 		}
 	});
 
+	test("renders opaque application and dialog surfaces", async () => {
+		const request = Promise.withResolvers<TorrentList>();
+		const setup = await testRender(
+			<App
+				operations={withListRequest(() => request.promise)}
+				onQuit={() => {}}
+			/>,
+			{ width: 80, height: 16 },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				request.resolve({ torrents: [] });
+				await request.promise;
+			});
+			await setup.renderOnce();
+
+			const shellTitle = setup
+				.captureSpans()
+				.lines.flatMap((line) => line.spans)
+				.find((span) => span.text.includes("torrent-tui"));
+			expect(shellTitle?.bg.equals(RGBA.fromHex(theme.background))).toBe(
+				true,
+			);
+
+			act(() => setup.mockInput.pressKey("a"));
+			await setup.renderOnce();
+
+			const dialogTitle = setup
+				.captureSpans()
+				.lines.flatMap((line) => line.spans)
+				.find((span) => span.text.includes("Add torrent"));
+			expect(
+				dialogTitle?.bg.equals(RGBA.fromHex(theme.backgroundPanel)),
+			).toBe(true);
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("shows structured add-dialog hints", async () => {
+		const request = Promise.withResolvers<TorrentList>();
+		const setup = await testRender(
+			<App
+				operations={withListRequest(() => request.promise)}
+				onQuit={() => {}}
+			/>,
+			{ width: 100, height: 24 },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				request.resolve({ torrents: [] });
+				await request.promise;
+			});
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressKey("a"));
+			await setup.renderOnce();
+
+			const frame = setup.captureCharFrame();
+			expect(frame).toContain("Tab browse");
+			expect(frame).toContain("Enter add");
+			expect(frame).toContain("Esc close");
+			const addSpans = setup
+				.captureSpans()
+				.lines.flatMap((line) => line.spans);
+			expect(
+				addSpans
+					.find((span) => span.text === "Tab")
+					?.fg.equals(RGBA.fromHex(theme.primary)),
+			).toBe(true);
+			expect(
+				addSpans
+					.find((span) => span.text === " browse")
+					?.fg.equals(RGBA.fromHex(theme.textMuted)),
+			).toBe(true);
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
 	test("refreshes once while preserving rows and selection by hash", async () => {
 		const initial = Promise.withResolvers<TorrentList>();
 		const refresh = Promise.withResolvers<TorrentList>();
