@@ -277,7 +277,9 @@ describe("App", () => {
 				await initial.promise;
 			});
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("s start  p stop");
+			expect(setup.captureCharFrame()).toContain(
+				"s start  p stop  d remove",
+			);
 
 			act(() => {
 				setup.mockInput.pressArrow("down");
@@ -296,7 +298,7 @@ describe("App", () => {
 			expect(listCalls).toBe(1);
 			expect(quitCalls).toBe(1);
 			expect(busyFrame).toContain("Starting…");
-			expect(busyFrame).toContain("s start  p stop");
+			expect(busyFrame).toContain("s start  p stop  d remove");
 			expect(busyFrame).toContain("r refresh");
 			expect(busyFrame).toContain("q quit");
 			expect(busyFrame).not.toContain("^c");
@@ -376,7 +378,9 @@ describe("App", () => {
 			act(() => setup.mockInput.pressKey("p"));
 			await setup.renderOnce();
 			expect(setup.captureCharFrame()).toContain("Stopping…");
-			expect(setup.captureCharFrame()).toContain("s start  p stop");
+			expect(setup.captureCharFrame()).toContain(
+				"s start  p stop  d remove",
+			);
 			await act(async () => {
 				stop.reject(new Error("mutation unavailable"));
 				await stop.promise.catch(() => {});
@@ -465,6 +469,234 @@ describe("App", () => {
 			await setup.renderOnce();
 			expect(setup.captureCharFrame()).toContain("Refreshing…");
 			expect(setup.captureCharFrame()).not.toContain("Stop failed");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("confirms removal and blocks main shortcuts while the dialog is open", async () => {
+		const initial = Promise.withResolvers<TorrentList>();
+		const mutation = Promise.withResolvers<void>();
+		const refresh = Promise.withResolvers<TorrentList>();
+		const refreshStarted = Promise.withResolvers<void>();
+		let listCalls = 0;
+		const removedHashes: string[] = [];
+		let quitCalls = 0;
+		const setup = await testRender(
+			<App
+				operations={{
+					...operations,
+					listTorrents: () => {
+						listCalls += 1;
+						if (listCalls === 1) return initial.promise;
+						refreshStarted.resolve();
+						return refresh.promise;
+					},
+					removeTorrent: (hash) => {
+						removedHashes.push(hash);
+						return mutation.promise;
+					},
+				}}
+				onQuit={() => {
+					quitCalls += 1;
+				}}
+			/>,
+			{ width: 100, height: 12, kittyKeyboard: true },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				initial.resolve({
+					torrents: [
+						torrent("hash-1", "First torrent"),
+						torrent("hash-2", "Second torrent"),
+					],
+				});
+				await initial.promise;
+			});
+			await setup.renderOnce();
+
+			act(() => {
+				setup.mockInput.pressArrow("down");
+				setup.mockInput.pressKey("d");
+			});
+			await setup.renderOnce();
+			let frame = setup.captureCharFrame();
+			expect(frame).toContain("Remove torrent");
+			expect(frame).toContain("Second torrent");
+			expect(frame).toContain("Local data will be kept.");
+			expect(frame).toContain("Enter remove");
+			expect(frame).toContain("Esc cancel");
+
+			act(() => {
+				setup.mockInput.pressKey("q");
+				setup.mockInput.pressKey("r");
+				setup.mockInput.pressEnter();
+			});
+			await setup.renderOnce();
+			expect(quitCalls).toBe(0);
+			expect(listCalls).toBe(1);
+			expect(removedHashes).toEqual(["hash-2"]);
+			expect(setup.captureCharFrame()).toContain("Removing...");
+			expect(setup.captureCharFrame()).not.toContain("Enter remove");
+			expect(setup.captureCharFrame()).not.toContain("Esc cancel");
+
+			act(() => {
+				setup.mockInput.pressEnter();
+				setup.mockInput.pressEscape();
+			});
+			await setup.renderOnce();
+			expect(removedHashes).toEqual(["hash-2"]);
+
+			await act(async () => {
+				mutation.resolve();
+				await mutation.promise;
+				await refreshStarted.promise;
+			});
+			expect(listCalls).toBe(2);
+			await act(async () => {
+				refresh.resolve({
+					torrents: [torrent("hash-1", "First torrent")],
+				});
+				await refresh.promise;
+			});
+			await setup.renderOnce();
+			frame = setup.captureCharFrame();
+			expect(frame).not.toContain("Remove torrent");
+			expect(frame).toContain("First torrent");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("cancels removal without calling Transmission", async () => {
+		const request = Promise.withResolvers<TorrentList>();
+		let removeCalls = 0;
+		const setup = await testRender(
+			<App
+				operations={{
+					...withListRequest(() => request.promise),
+					removeTorrent: async () => {
+						removeCalls += 1;
+					},
+				}}
+				onQuit={() => {}}
+			/>,
+			{ width: 100, height: 10, kittyKeyboard: true },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				request.resolve({
+					torrents: [torrent("hash-1", "Existing torrent")],
+				});
+				await request.promise;
+			});
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressKey("d"));
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressEscape());
+			await setup.renderOnce();
+
+			expect(removeCalls).toBe(0);
+			expect(setup.captureCharFrame()).not.toContain("Remove torrent");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("closes the remove dialog and reports a mutation failure", async () => {
+		const request = Promise.withResolvers<TorrentList>();
+		const mutation = Promise.withResolvers<void>();
+		const setup = await testRender(
+			<App
+				operations={{
+					...withListRequest(() => request.promise),
+					removeTorrent: () => mutation.promise,
+				}}
+				onQuit={() => {}}
+			/>,
+			{ width: 100, height: 10, kittyKeyboard: true },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				request.resolve({
+					torrents: [torrent("hash-1", "Existing torrent")],
+				});
+				await request.promise;
+			});
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressKey("d"));
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressEnter());
+			await act(async () => {
+				mutation.reject(new Error("remove unavailable"));
+				await mutation.promise.catch(() => {});
+			});
+			await setup.renderOnce();
+
+			const frame = setup.captureCharFrame();
+			expect(frame).toContain("Existing torrent");
+			expect(frame).toContain("Remove failed");
+			expect(frame).not.toContain("Remove torrent");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("removes the row locally when the follow-up refresh fails", async () => {
+		const initial = Promise.withResolvers<TorrentList>();
+		const refresh = Promise.withResolvers<TorrentList>();
+		const refreshStarted = Promise.withResolvers<void>();
+		let listCalls = 0;
+		const setup = await testRender(
+			<App
+				operations={{
+					...operations,
+					listTorrents: () => {
+						listCalls += 1;
+						if (listCalls === 1) return initial.promise;
+						refreshStarted.resolve();
+						return refresh.promise;
+					},
+				}}
+				onQuit={() => {}}
+			/>,
+			{ width: 100, height: 10, kittyKeyboard: true },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				initial.resolve({
+					torrents: [
+						torrent("hash-1", "Removed torrent"),
+						torrent("hash-2", "Remaining torrent"),
+					],
+				});
+				await initial.promise;
+			});
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressKey("d"));
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressEnter());
+			await act(async () => {
+				await refreshStarted.promise;
+				refresh.reject(new Error("refresh unavailable"));
+				await refresh.promise.catch(() => {});
+			});
+			await setup.renderOnce();
+
+			const frame = setup.captureCharFrame();
+			expect(listCalls).toBe(2);
+			expect(frame).not.toContain("Removed torrent");
+			expect(frame).toContain("Remaining torrent");
+			expect(frame).not.toContain("Remove failed");
+			expect(frame).not.toContain("Refresh failed");
 		} finally {
 			act(() => setup.renderer.destroy());
 		}
@@ -914,6 +1146,7 @@ describe("App", () => {
 				setup.mockInput.pressKey("k");
 				setup.mockInput.pressKey("HOME");
 				setup.mockInput.pressKey("END");
+				setup.mockInput.pressKey("d");
 			});
 			await setup.renderOnce();
 
@@ -921,6 +1154,7 @@ describe("App", () => {
 			expect(frame).toContain("No torrents");
 			expect(frame).not.toContain("s start");
 			expect(frame).not.toContain("p stop");
+			expect(frame).not.toContain("Remove torrent");
 		} finally {
 			act(() => setup.renderer.destroy());
 		}

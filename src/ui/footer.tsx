@@ -22,7 +22,9 @@ export function Footer({
 		? [keybinds.quit]
 		: [
 				...(canAdd ? [keybinds.add] : []),
-				...(hasSelection ? [keybinds.start, keybinds.stop] : []),
+				...(hasSelection
+					? [keybinds.start, keybinds.stop, keybinds.remove]
+					: []),
 				keybinds.refresh,
 				keybinds.quit,
 			];

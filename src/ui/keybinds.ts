@@ -11,6 +11,10 @@ export const keybinds = {
 		key: "p",
 		label: "stop",
 	},
+	remove: {
+		key: "d",
+		label: "remove",
+	},
 	refresh: {
 		key: "r",
 		label: "refresh",

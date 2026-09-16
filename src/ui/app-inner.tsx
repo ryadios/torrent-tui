@@ -2,6 +2,7 @@ import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
 import {
 	addTorrent,
+	removeTorrent,
 	startTorrent,
 	stopTorrent,
 	type TorrentOperations,
@@ -11,6 +12,7 @@ import { AddDialog } from "./add-dialog";
 import { Footer } from "./footer";
 import { Frame } from "./frame";
 import { keybinds } from "./keybinds";
+import { RemoveDialog } from "./remove-dialog";
 import { theme } from "./theme";
 import { TorrentList } from "./torrent-list";
 
@@ -38,6 +40,15 @@ type AddState =
 	| { open: false }
 	| { open: true; pending: boolean; error?: string };
 
+type RemoveState =
+	| { open: false }
+	| {
+			open: true;
+			name: string;
+			hash: string;
+			pending: boolean;
+	  };
+
 function withTorrents(
 	current: ListState,
 	torrents: TorrentSummary[],
@@ -60,6 +71,7 @@ function withTorrents(
 export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	const [list, setList] = useState<ListState>({ status: "loading" });
 	const [add, setAdd] = useState<AddState>({ open: false });
+	const [remove, setRemove] = useState<RemoveState>({ open: false });
 	const busy = useRef(false);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
@@ -190,6 +202,73 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		}
 	}
 
+	function openRemove(): void {
+		if (list.status !== "loaded" || busy.current || remove.open) return;
+
+		const torrentHash = selectedHash.current;
+		const torrent = list.torrents.find(
+			(candidate) => candidate.hash_string === torrentHash,
+		);
+		if (!torrent) return;
+
+		onModalActiveChange(true);
+		setRemove({
+			open: true,
+			name: torrent.name,
+			hash: torrent.hash_string,
+			pending: false,
+		});
+	}
+
+	function closeRemove(): void {
+		if (!remove.open || remove.pending) return;
+		onModalActiveChange(false);
+		setRemove({ open: false });
+	}
+
+	async function submitRemove(): Promise<void> {
+		if (!remove.open || remove.pending || busy.current) return;
+
+		const torrentHash = remove.hash;
+		busy.current = true;
+		setRemove((current) =>
+			current.open ? { ...current, pending: true } : current,
+		);
+		setList((current) =>
+			current.status === "loaded"
+				? {
+						...current,
+						activity: { kind: "busy", message: "Removing…" },
+					}
+				: current,
+		);
+
+		try {
+			const outcome = await removeTorrent(operations, torrentHash);
+			if (!mounted.current) return;
+
+			const nextTorrents =
+				outcome.status === "refreshed"
+					? outcome.torrents.torrents
+					: list.status === "loaded"
+						? list.torrents.filter(
+								(torrent) =>
+									torrent.hash_string !== torrentHash,
+							)
+						: [];
+			setList((current) => withTorrents(current, nextTorrents));
+			onModalActiveChange(false);
+			setRemove({ open: false });
+		} catch {
+			if (!mounted.current) return;
+			onModalActiveChange(false);
+			setRemove({ open: false });
+			showMessage("Remove failed");
+		} finally {
+			busy.current = false;
+		}
+	}
+
 	async function start(): Promise<void> {
 		const torrentHash = selectedHash.current;
 		if (list.status !== "loaded" || !torrentHash || busy.current) return;
@@ -285,7 +364,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	}
 
 	useKeyboard((key) => {
-		if (add.open) return;
+		if (add.open || remove.open) return;
 		// Ignore modified shortcuts.
 		if (key.ctrl || key.meta || key.shift) return;
 		// Ignore held network shortcuts.
@@ -294,7 +373,8 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 			(key.name === keybinds.refresh.key ||
 				key.name === keybinds.start.key ||
 				key.name === keybinds.stop.key ||
-				key.name === keybinds.add.key)
+				key.name === keybinds.add.key ||
+				key.name === keybinds.remove.key)
 		) {
 			return;
 		}
@@ -317,6 +397,10 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		// Stop the selected torrent.
 		if (key.name === keybinds.stop.key) {
 			void stop();
+			return;
+		}
+		if (key.name === keybinds.remove.key) {
+			openRemove();
 			return;
 		}
 		// Select the next torrent.
@@ -425,6 +509,16 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 							setAdd({ open: true, pending: false });
 						}
 					}}
+				/>
+			) : null}
+			{remove.open ? (
+				<RemoveDialog
+					name={remove.name}
+					pending={remove.pending}
+					onConfirm={() => {
+						void submitRemove();
+					}}
+					onClose={closeRemove}
 				/>
 			) : null}
 		</box>
