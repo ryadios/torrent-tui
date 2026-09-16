@@ -148,7 +148,7 @@ export class TransmissionClient {
 	addTorrent(source: TorrentAddSource): Promise<TorrentAddResult> {
 		return this.rpcCall<TorrentAddResult>("torrent_add", {
 			...source,
-			paused: true,
+			paused: false,
 		});
 	}
 

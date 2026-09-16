@@ -145,7 +145,7 @@ describe("TransmissionClient operations", () => {
 		});
 	});
 
-	test("adds a torrent paused and returns the server result", async () => {
+	test("adds and starts a torrent in one request", async () => {
 		const addResult = {
 			torrent_added: {
 				id: 1,
@@ -162,11 +162,11 @@ describe("TransmissionClient operations", () => {
 		expect(result).toEqual(addResult);
 		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
 			filename: "/tmp/example.torrent",
-			paused: true,
+			paused: false,
 		});
 	});
 
-	test("adds base64 metainfo paused and returns the server result", async () => {
+	test("adds and starts base64 metainfo in one request", async () => {
 		const addResult = {
 			torrent_added: {
 				id: 1,
@@ -183,7 +183,7 @@ describe("TransmissionClient operations", () => {
 		expect(result).toEqual(addResult);
 		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
 			metainfo: "dG9ycmVudCBieXRlcw==",
-			paused: true,
+			paused: false,
 		});
 	});
 
