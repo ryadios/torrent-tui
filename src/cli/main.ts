@@ -1,4 +1,4 @@
-import { stringWidth } from "bun";
+import { stringWidth, stripANSI } from "bun";
 import {
 	addTorrent,
 	type RefreshOutcome,
@@ -32,11 +32,14 @@ const statuses: Record<number, string> = {
 	6: "Seeding",
 };
 
+function sanitizeTerminalText(value: string): string {
+	return stripANSI(value).replace(/\p{Cc}/gu, "");
+}
+
 function formatStatus(torrent: TorrentSummary): string {
 	if (torrent.error !== 0) {
-		return torrent.error_string
-			? `Error: ${torrent.error_string}`
-			: "Error";
+		const errorString = sanitizeTerminalText(torrent.error_string);
+		return errorString ? `Error: ${errorString}` : "Error";
 	}
 
 	return statuses[torrent.status] ?? `Status ${torrent.status}`;
@@ -84,8 +87,8 @@ function printTorrentList(torrents: TorrentSummary[], output: CliOutput): void {
 		"UPLOAD",
 	];
 	const rows = torrents.map((torrent) => [
-		torrent.hash_string,
-		torrent.name,
+		sanitizeTerminalText(torrent.hash_string),
+		sanitizeTerminalText(torrent.name),
 		formatStatus(torrent),
 		formatProgress(torrent.percent_done),
 		`↓ ${formatRate(torrent.rate_download)}`,
@@ -192,46 +195,53 @@ export async function runCli(
 	operations: TorrentOperations,
 	output: CliOutput = defaultOutput,
 ): Promise<number> {
+	const safeOutput: CliOutput = {
+		stdout: (text) => output.stdout(sanitizeTerminalText(text)),
+		stderr: (text) => output.stderr(sanitizeTerminalText(text)),
+	};
 	const command = args[0];
 
 	if (command === "list") {
 		return args.length === 1
-			? runList(operations, output)
-			: usageError(output);
+			? runList(operations, safeOutput)
+			: usageError(safeOutput);
 	}
 
 	if (command === "add") {
 		return args.length === 2
-			? runAdd(operations, args[1] ?? "", output)
-			: usageError(output);
+			? runAdd(operations, args[1] ?? "", safeOutput)
+			: usageError(safeOutput);
 	}
 
 	if (command === "start" && args.length === 2) {
-		const hash = args[1] ?? "";
+		const hash = args[1]?.trim();
+		if (!hash) return usageError(safeOutput);
 		return runMutation(
 			() => startTorrent(operations, hash),
 			`Started ${hash}`,
-			output,
+			safeOutput,
 		);
 	}
 
 	if (command === "stop" && args.length === 2) {
-		const hash = args[1] ?? "";
+		const hash = args[1]?.trim();
+		if (!hash) return usageError(safeOutput);
 		return runMutation(
 			() => stopTorrent(operations, hash),
 			`Stopped ${hash}`,
-			output,
+			safeOutput,
 		);
 	}
 
 	if (command === "remove" && args.length === 2) {
-		const hash = args[1] ?? "";
+		const hash = args[1]?.trim();
+		if (!hash) return usageError(safeOutput);
 		return runMutation(
 			() => removeTorrent(operations, hash),
 			`Removed ${hash} (local data kept)`,
-			output,
+			safeOutput,
 		);
 	}
 
-	return usageError(output);
+	return usageError(safeOutput);
 }

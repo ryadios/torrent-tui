@@ -181,6 +181,8 @@ export function AddDialog({
 					source={source}
 					onSelect={(path) => {
 						setSource(path);
+						setValidationError(undefined);
+						onClearError();
 						setDismissedSource(path);
 						setView("add");
 						setFocus("source");

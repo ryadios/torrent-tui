@@ -150,7 +150,7 @@ describe("CLI", () => {
 			const captured = captureOutput();
 			const calls: string[] = [];
 			const result = await runCli(
-				[command, "abc123"],
+				[command, " abc123 "],
 				makeOperations({
 					startTorrent: async (hash) => {
 						calls.push(`start:${hash}`);
@@ -170,6 +170,89 @@ describe("CLI", () => {
 			expect(captured.stdout).toEqual([message]);
 			expect(captured.stderr).toEqual([]);
 		}
+	});
+
+	test("rejects blank hash mutations before calling the daemon", async () => {
+		for (const command of ["start", "stop", "remove"] as const) {
+			const captured = captureOutput();
+			const calls: string[] = [];
+
+			expect(
+				await runCli(
+					[command, " \t"],
+					makeOperations({
+						startTorrent: async () => {
+							calls.push("start");
+						},
+						stopTorrent: async () => {
+							calls.push("stop");
+						},
+						removeTorrent: async () => {
+							calls.push("remove");
+						},
+					}),
+					captured.output,
+				),
+			).toBe(2);
+			expect(calls).toEqual([]);
+			expect(captured.stdout).toEqual([]);
+			expect(captured.stderr).toHaveLength(1);
+			expect(captured.stderr[0]).toContain("Usage: torrent-tui");
+		}
+	});
+
+	test("sanitizes daemon text before writing CLI output", async () => {
+		const unsafe = "\u001b[31mTorrent\u001b[0m\nname";
+		const listOutput = captureOutput();
+		const listedTorrent = torrent(unsafe, unsafe);
+		listedTorrent.error = 1;
+		listedTorrent.error_string = unsafe;
+
+		expect(
+			await runCli(
+				["list"],
+				makeOperations({
+					listTorrents: async () => ({ torrents: [listedTorrent] }),
+				}),
+				listOutput.output,
+			),
+		).toBe(0);
+		expect(listOutput.stdout[1]).toContain("Torrentname");
+		expect(listOutput.stdout[1]).toContain("Error: Torrentname");
+		expect(listOutput.stdout[1]).not.toContain("\u001b");
+		expect(listOutput.stdout[1]).not.toContain("\n");
+
+		const addOutput = captureOutput();
+		expect(
+			await runCli(
+				["add", "source"],
+				makeOperations({
+					addTorrent: async () => ({
+						torrent_added: {
+							id: 1,
+							hash_string: unsafe,
+							name: unsafe,
+						},
+					}),
+				}),
+				addOutput.output,
+			),
+		).toBe(0);
+		expect(addOutput.stdout).toEqual(["Added Torrentname (Torrentname)"]);
+
+		const errorOutput = captureOutput();
+		expect(
+			await runCli(
+				["stop", "hash"],
+				makeOperations({
+					stopTorrent: async () => {
+						throw new Error(unsafe);
+					},
+				}),
+				errorOutput.output,
+			),
+		).toBe(1);
+		expect(errorOutput.stderr).toEqual(["Error: Torrentname"]);
 	});
 
 	test("keeps a successful mutation when the follow-up refresh fails", async () => {
