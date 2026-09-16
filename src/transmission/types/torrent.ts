@@ -26,3 +26,5 @@ export type TorrentReference = {
 export type TorrentAddResult =
 	| { torrent_added: TorrentReference }
 	| { torrent_duplicate: TorrentReference };
+
+export type TorrentAddSource = { filename: string } | { metainfo: string };

@@ -13,7 +13,7 @@ export function Frame({ children, titleRight, style }: FrameProps) {
 		<box
 			border={FullBorder.border}
 			customBorderChars={FullBorder.customBorderChars}
-			borderColor={theme.border}
+			borderColor={theme.borderSubtle}
 			style={style}
 		>
 			{children}
@@ -25,7 +25,7 @@ export function Frame({ children, titleRight, style }: FrameProps) {
 						right: 2,
 						paddingLeft: 1,
 						paddingRight: 1,
-						backgroundColor: theme.titleBackground,
+						backgroundColor: theme.background,
 					}}
 				>
 					{titleRight}

@@ -145,7 +145,7 @@ describe("TransmissionClient operations", () => {
 		});
 	});
 
-	test("adds a torrent paused and returns the server result", async () => {
+	test("adds and starts a torrent in one request", async () => {
 		const addResult = {
 			torrent_added: {
 				id: 1,
@@ -155,14 +155,35 @@ describe("TransmissionClient operations", () => {
 		};
 		const requests = stubFetch([jsonResponse({ result: addResult })]);
 
-		const result = await new TransmissionClient().addTorrent(
-			"/tmp/example.torrent",
-		);
+		const result = await new TransmissionClient().addTorrent({
+			filename: "/tmp/example.torrent",
+		});
 
 		expect(result).toEqual(addResult);
 		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
 			filename: "/tmp/example.torrent",
-			paused: true,
+			paused: false,
+		});
+	});
+
+	test("adds and starts base64 metainfo in one request", async () => {
+		const addResult = {
+			torrent_added: {
+				id: 1,
+				hash_string: "abc123",
+				name: "example.iso",
+			},
+		};
+		const requests = stubFetch([jsonResponse({ result: addResult })]);
+
+		const result = await new TransmissionClient().addTorrent({
+			metainfo: "dG9ycmVudCBieXRlcw==",
+		});
+
+		expect(result).toEqual(addResult);
+		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
+			metainfo: "dG9ycmVudCBieXRlcw==",
+			paused: false,
 		});
 	});
 

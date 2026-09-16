@@ -24,14 +24,38 @@ bunx tsc --noEmit
 
 ```text
 src/
-├── index.tsx                         # OpenTUI application bootstrap
-└── transmission/
-    ├── client.ts                     # Transmission RPC client and session handling
-    └── types/
-        ├── session.ts                # Transmission session response types
-        └── torrent.ts                # Torrent list, reference, and add-result types
+├── index.tsx                         # Select the TUI or CLI entry path
+├── app/
+│   └── main.tsx                      # Create the client, renderer, and TUI
+├── cli/
+│   └── main.ts                       # Dispatch CLI commands and render output
+├── torrent/
+│   ├── actions.ts                    # Coordinate torrent mutations and list refreshes
+│   └── source.ts                     # Resolve local and remote torrent sources
+├── transmission/
+│   ├── client.ts                     # Transmission RPC client and session handling
+│   └── types/
+│       ├── session.ts                # Transmission session response types
+│       └── torrent.ts                # Torrent list, reference, and add-source types
+└── ui/
+    ├── app.tsx                       # Render the shell and own the quit boundary
+    ├── app-inner.tsx                 # Render the current main content area
+    ├── add-dialog.tsx                # Add source entry and Browse entry point
+    ├── borders.ts                    # Shared border presets
+    ├── dialog.tsx                    # Shared renderer-root modal shell and hints
+    ├── footer.tsx                    # Render footer key hints
+    ├── frame.tsx                     # Render titled content frames
+    ├── header.tsx                    # Render the application header
+    ├── keybinds.ts                   # Define shell key hints
+    ├── progress-bar.tsx              # Render compact torrent progress
+    ├── remove-dialog.tsx             # Confirm removal while keeping local data
+    ├── theme.ts                      # Define Tokyo Night theme values
+    ├── torrent-browser.tsx           # Browse readable directories and torrent files
+    ├── torrent-list.tsx              # Render the torrent list and rows
+    └── torrent-paths.ts              # Resolve and suggest local torrent paths
 
-tests/                                # Unit and future integration tests
+tests/
+└── unit/                              # Daemon-free unit and renderer tests
 ```
 
 ## Distribution

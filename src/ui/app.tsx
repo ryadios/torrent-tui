@@ -1,17 +1,30 @@
 import { useKeyboard } from "@opentui/react";
+import { useCallback, useRef } from "react";
+import type { TorrentOperations } from "../torrent/actions";
 import { AppInner } from "./app-inner";
-import { Footer } from "./footer";
 import { Header } from "./header";
 import { keybinds } from "./keybinds";
 import { theme } from "./theme";
 
 type AppProps = {
+	operations: TorrentOperations;
 	onQuit: () => void;
 };
 
-export function App({ onQuit }: AppProps) {
+export function App({ operations, onQuit }: AppProps) {
+	const modalActive = useRef(false);
+	const handleModalActiveChange = useCallback((active: boolean) => {
+		modalActive.current = active;
+	}, []);
+
 	useKeyboard((key) => {
-		if (key.name === keybinds.quit.key && !key.ctrl) {
+		if (
+			key.name === keybinds.quit.key &&
+			!modalActive.current &&
+			!key.ctrl &&
+			!key.meta &&
+			!key.shift
+		) {
 			onQuit();
 		}
 	});
@@ -23,8 +36,10 @@ export function App({ onQuit }: AppProps) {
 			backgroundColor={theme.background}
 		>
 			<Header />
-			<AppInner />
-			<Footer />
+			<AppInner
+				operations={operations}
+				onModalActiveChange={handleModalActiveChange}
+			/>
 		</box>
 	);
 }
