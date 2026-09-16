@@ -62,9 +62,9 @@ tests/
 
 ## Version control workflow
 
-- Start each big task on a new branch from `v2` named `<type>/<domain>`; keep both segments concise. Use direct commits for small tasks.
+- Start each big task on a new branch from `main` named `<type>/<domain>`; keep both segments concise. Use direct commits for small tasks.
 - Divide work into coherent phases by subfeature or subtask, using focused Conventional Commits in `type: summary` form.
-- Open pull requests against `v2` with concise, human-readable titles without commit-type prefixes.
+- Open pull requests against `main` with concise, human-readable titles without commit-type prefixes.
 - Keep PR descriptions concise and use a `Summary` heading containing the overall change; rely on CodeRabbit for detailed commit summaries.
 
 ## Testing
