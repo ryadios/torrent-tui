@@ -1,64 +1,81 @@
-# Agent Guidelines for torrent-tui
+# torrent-tui agent guide
 
-## Build Commands
+## Quick commands
 
-```bash
-bun run src/index.ts    # Run the app
-bun run dev             # Development mode (watch)
-bun run check:fix       # Format and fix lint issues
+```sh
+bun install
+bun dev
+bun test
+bunx biome check ./src ./tests
+bunx tsc --noEmit
 ```
 
-## Project Overview
+## Stack
 
-- **Runtime**: Bun | **UI**: @opentui/core (Core API) | **Validation**: Zod | **Language**: TypeScript (strict)
-
-## Code Style
-
-- **Formatter**: Biome | **Indentation**: Tabs | **Quotes**: Double
-- **TypeScript**: Strict mode, explicit param types, prefer interfaces, no implicit `any`
-- **Imports**: Relative paths, group external → internal → types, no barrel exports
-
-## Naming Conventions
-
-| Type | Convention | Example |
-|------|------------|---------|
-| Classes | PascalCase | `App`, `Store`, `TorrentSession` |
-| Methods/Variables | camelCase | `getState()`, `selectedIndex` |
-| Files/Directories | kebab-case | `app-controller.ts`, `peer/` |
+- **Runtime:** Bun.
+- **Language:** TypeScript with strict checking and native ES modules.
+- **UI:** OpenTUI Core with the OpenTUI React binding. JSX uses OpenTUI through `jsxImportSource`.
+- **Backend:** Transmission daemon accessed through its RPC API.
+- **Tests:** Bun's built-in test runner (`bun:test`).
+- **Formatting and linting:** Biome.
+- **Package manager:** Bun with `bun.lock`.
 
 ## Architecture
 
-```
+```text
 src/
-├── index.ts                          # Entry: CLI arg → add torrent, then TUI
-├── app.ts                            # TUI orchestration
-├── torrent/                          # === BITTORRENT ENGINE ===
-│   ├── parser.ts                     # Bencode encode/decode
-│   ├── metadata.ts                   # TorrentMetadata class
-│   ├── storage.ts                    # File I/O, piece read/write, hash verification
-│   ├── session.ts                    # TorrentSession — top-level engine, event emitter
-│   ├── piece-picker.ts               # Rarest-first selection, availability tracking
-│   ├── types.ts                      # Core types: PeerInfo, PieceState, TorrentStatus
-│   ├── tracker/                      # HTTP + UDP tracker clients
-│   └── peer/                         # Peer ID, listener, connection, protocol, handshake, manager
-├── store/                            # State management (Store class)
-├── layout/                           # UI components (absolute positioning, update in-place)
-├── controllers/                      # Keyboard + engine event handling
-├── config/                           # Configuration I/O
-├── theme/ └── constants/ └── types/ └── utils/
+├── index.tsx                         # Select the TUI or CLI entry path
+├── app/
+│   └── main.tsx                      # Create the client, renderer, and TUI
+├── cli/
+│   └── main.ts                       # Dispatch CLI commands and render output
+├── torrent/
+│   ├── actions.ts                    # Coordinate torrent mutations and list refreshes
+│   └── source.ts                     # Resolve local and remote torrent sources
+├── transmission/
+│   ├── client.ts                     # Transmission RPC client and session handling
+│   └── types/
+│       ├── session.ts                # Transmission session response types
+│       └── torrent.ts                # Torrent list, reference, and add-source types
+└── ui/
+    ├── app.tsx                       # Render the shell and own the quit boundary
+    ├── app-inner.tsx                 # Render the current main content area
+    ├── add-dialog.tsx                # Add source entry and Browse entry point
+    ├── borders.ts                    # Shared border presets
+    ├── dialog.tsx                    # Shared renderer-root modal shell and hints
+    ├── footer.tsx                    # Render footer key hints
+    ├── frame.tsx                     # Render titled content frames
+    ├── header.tsx                    # Render the application header
+    ├── keybinds.ts                   # Define shell key hints
+    ├── progress-bar.tsx              # Render compact torrent progress
+    ├── remove-dialog.tsx             # Confirm removal while keeping local data
+    ├── theme.ts                      # Define Tokyo Night theme values
+    ├── torrent-browser.tsx           # Browse readable directories and torrent files
+    ├── torrent-list.tsx              # Render the torrent list and rows
+    └── torrent-paths.ts              # Resolve and suggest local torrent paths
+
+tests/
+└── unit/                              # Daemon-free unit and renderer tests
 ```
 
-### Key Patterns
+## Distribution
 
-- **Store**: `getState()`, `setState(partial)`, `subscribe(listener)` — engine calls `setState()`, TUI subscribes
-- **Engine → TUI**: EventEmitter via `store.setState()`, TUI render-throttled at 10 FPS
-- **Components**: Build once in constructor with absolute positioning, `update()` modifies in-place, `updateLayout()` handles resize
-- **Engine**: Single-threaded, async chunked hashing (one piece per tick), no workers
-- **Never** call `process.exit()` — use `renderer.destroy()`
+## Version control workflow
 
-## Common Commands
+- Start each big task on a new branch from `v2` named `<type>/<domain>`; keep both segments concise. Use direct commits for small tasks.
+- Divide work into coherent phases by subfeature or subtask, using focused Conventional Commits in `type: summary` form.
+- Open pull requests against `v2` with concise, human-readable titles without commit-type prefixes.
+- Keep PR descriptions concise and use a `Summary` heading containing the overall change; rely on CodeRabbit for detailed commit summaries.
 
-```bash
-bun add <package>       # Add dependency
-npx tsc --noEmit        # Type check without building
-```
+## Testing
+
+- Use Bun's built-in test runner.
+- Keep unit tests under `tests/unit/` and reserve `tests/integration/` for tests that require Transmission or another external service.
+- Unit tests should not require a running Transmission daemon.
+- Test public behavior and meaningful RPC requests instead of private implementation details or TypeScript-only types.
+- Restore global mocks after each test and keep test state isolated.
+- Await real asynchronous operations; do not use arbitrary delays to make asynchronous tests pass.
+- Use temporary directories for future filesystem tests rather than writing test data into the repository.
+- Keep OpenTUI renderer tests separate from backend tests and release renderer resources after each test.
+- Add or update a focused test when observable behavior changes.
+- Do not add another test framework or coverage policy until the project has a concrete need for it.

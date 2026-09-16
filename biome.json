@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.11/schema.json",
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -10,18 +10,13 @@
 	},
 	"formatter": {
 		"enabled": true,
-		"indentStyle": "tab"
+		"indentStyle": "tab",
+		"indentWidth": 4
 	},
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
-			"suspicious": {
-				"noExplicitAny": "warn"
-			},
-			"style": {
-				"noNonNullAssertion": "warn"
-			}
+			"preset": "recommended"
 		}
 	},
 	"javascript": {
