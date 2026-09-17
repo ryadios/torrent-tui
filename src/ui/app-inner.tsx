@@ -1,5 +1,5 @@
 import { useKeyboard } from "@opentui/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	addTorrent,
 	removeTorrent,
@@ -15,6 +15,7 @@ import { keybinds } from "./keybinds";
 import { RemoveDialog } from "./remove-dialog";
 import { theme } from "./theme";
 import { TorrentList } from "./torrent-list";
+import { useTorrentPolling } from "./use-torrent-polling";
 
 type AppInnerProps = {
 	operations: TorrentOperations;
@@ -25,6 +26,8 @@ type Activity =
 	| { kind: "idle" }
 	| { kind: "busy"; message: string }
 	| { kind: "message"; message: string; tone: "error" | "warning" };
+
+type RefreshOrigin = "manual" | "poll";
 
 type ListState =
 	| { status: "loading" }
@@ -75,6 +78,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	const busy = useRef(false);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
+	const pollWarningShown = useRef(false);
 
 	const showMessage = (
 		message: string,
@@ -92,6 +96,11 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		);
 	};
 
+	const applyTorrents = useCallback((torrents: TorrentSummary[]): void => {
+		pollWarningShown.current = false;
+		setList((current) => withTorrents(current, torrents));
+	}, []);
+
 	useEffect(() => {
 		let active = true;
 
@@ -99,7 +108,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 			.listTorrents()
 			.then(({ torrents }) => {
 				if (!active) return;
-				setList((current) => withTorrents(current, torrents));
+				applyTorrents(torrents);
 			})
 			.catch(() => {
 				if (active) {
@@ -110,7 +119,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		return () => {
 			active = false;
 		};
-	}, [operations]);
+	}, [applyTorrents, operations]);
 
 	useEffect(() => {
 		selectedHash.current =
@@ -126,32 +135,48 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		};
 	}, [onModalActiveChange]);
 
-	async function refresh(): Promise<void> {
+	async function refresh(origin: RefreshOrigin = "manual"): Promise<void> {
 		if (list.status === "loading" || busy.current) return;
 
 		busy.current = true;
-		setList((current) =>
-			current.status === "loaded"
-				? {
-						...current,
-						activity: { kind: "busy", message: "Refreshing…" },
-					}
-				: { status: "loading" },
-		);
+		if (origin === "manual") {
+			setList((current) =>
+				current.status === "loaded"
+					? {
+							...current,
+							activity: { kind: "busy", message: "Refreshing…" },
+						}
+					: { status: "loading" },
+			);
+		}
 
 		try {
 			const { torrents } = await operations.listTorrents();
 			if (mounted.current) {
-				setList((current) => withTorrents(current, torrents));
+				applyTorrents(torrents);
 			}
 		} catch {
 			if (!mounted.current) return;
-			if (list.status === "loaded") showMessage("Refresh failed");
-			else setList({ status: "failed", activity: { kind: "idle" } });
+			if (list.status === "loaded") {
+				if (origin === "poll") {
+					if (pollWarningShown.current) return;
+					pollWarningShown.current = true;
+					showMessage("Refresh failed", "warning");
+				} else {
+					showMessage("Refresh failed");
+				}
+			} else setList({ status: "failed", activity: { kind: "idle" } });
 		} finally {
 			busy.current = false;
 		}
 	}
+
+	useTorrentPolling({
+		enabled: list.status === "loaded",
+		onTick: () => {
+			void refresh("poll");
+		},
+	});
 
 	function openAdd(): void {
 		if (list.status === "loading" || busy.current || add.open) return;
@@ -181,9 +206,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 			if (!mounted.current) return;
 
 			if (outcome.status === "refreshed") {
-				setList((current) =>
-					withTorrents(current, outcome.torrents.torrents),
-				);
+				applyTorrents(outcome.torrents.torrents);
 			} else {
 				showMessage("Refresh failed", "warning");
 			}
@@ -256,7 +279,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 									torrent.hash_string !== torrentHash,
 							)
 						: [];
-			setList((current) => withTorrents(current, nextTorrents));
+			applyTorrents(nextTorrents);
 			onModalActiveChange(false);
 			setRemove({ open: false });
 		} catch {
@@ -287,9 +310,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 			const outcome = await startTorrent(operations, torrentHash);
 			if (!mounted.current) return;
 			if (outcome.status === "refreshed") {
-				setList((current) =>
-					withTorrents(current, outcome.torrents.torrents),
-				);
+				applyTorrents(outcome.torrents.torrents);
 			} else {
 				showMessage("Started · refresh failed", "warning");
 			}
@@ -318,9 +339,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 			const outcome = await stopTorrent(operations, torrentHash);
 			if (!mounted.current) return;
 			if (outcome.status === "refreshed") {
-				setList((current) =>
-					withTorrents(current, outcome.torrents.torrents),
-				);
+				applyTorrents(outcome.torrents.torrents);
 			} else {
 				showMessage("Stopped · refresh failed", "warning");
 			}
