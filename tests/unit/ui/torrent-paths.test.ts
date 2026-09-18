@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	compactTorrentPath,
 	listTorrentPathSuggestions,
 	readTorrentDirectory,
 	resolveBrowseDirectory,
@@ -27,6 +28,15 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 describe("torrent path helpers", () => {
+	test("uses home-relative paths without changing external paths", () => {
+		expect(
+			compactTorrentPath(join(homedir(), "Downloads", "file.torrent")),
+		).toBe("~/Downloads/file.torrent");
+		expect(compactTorrentPath("/var/lib/file.torrent")).toBe(
+			"/var/lib/file.torrent",
+		);
+	});
+
 	test("lists directories and torrent files in a stable order", async () => {
 		const directory = await createTemporaryDirectory();
 		await mkdir(join(directory, "folder"));

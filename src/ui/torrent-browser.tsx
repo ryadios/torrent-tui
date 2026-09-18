@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { DialogHints } from "./dialog";
 import { theme } from "./theme";
 import {
+	compactTorrentPath,
 	readTorrentDirectory,
 	resolveBrowseDirectory,
 	type TorrentPathEntry,
@@ -110,7 +111,7 @@ export function TorrentBrowser({
 	function open(entry: TorrentPathEntry | undefined): void {
 		if (!entry) return;
 		if (entry.kind === "directory") setDirectory(entry.path);
-		else onSelect(entry.path);
+		else onSelect(compactTorrentPath(entry.path));
 	}
 
 	useKeyboard((key) => {
