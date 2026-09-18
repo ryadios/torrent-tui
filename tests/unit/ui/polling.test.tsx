@@ -106,7 +106,7 @@ describe("useTorrentPolling", () => {
 		}
 	});
 
-	test("schedules a five-second tick, calls it, and cleans it up", async () => {
+	test("schedules a two-second tick, calls it, and cleans it up", async () => {
 		const interval = interceptInterval();
 		const onTick = mock(() => {});
 		const setup = await testRender(
@@ -117,7 +117,7 @@ describe("useTorrentPolling", () => {
 		try {
 			await setup.renderOnce();
 			expect(interval.setIntervalSpy).toHaveBeenCalledTimes(1);
-			expect(interval.delay()).toBe(5_000);
+			expect(interval.delay()).toBe(2_000);
 
 			act(() => interval.tick());
 			expect(onTick).toHaveBeenCalledTimes(1);
