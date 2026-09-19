@@ -27,8 +27,6 @@ type Activity =
 	| { kind: "busy"; message: string }
 	| { kind: "message"; message: string; tone: "error" | "warning" };
 
-type RefreshOrigin = "manual" | "poll";
-
 type ListState =
 	| { status: "loading" }
 	| {
@@ -135,20 +133,10 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		};
 	}, [onModalActiveChange]);
 
-	async function refresh(origin: RefreshOrigin = "manual"): Promise<void> {
+	async function refresh(): Promise<void> {
 		if (list.status === "loading" || busy.current) return;
 
 		busy.current = true;
-		if (origin === "manual") {
-			setList((current) =>
-				current.status === "loaded"
-					? {
-							...current,
-							activity: { kind: "busy", message: "Refreshing…" },
-						}
-					: { status: "loading" },
-			);
-		}
 
 		try {
 			const { torrents } = await operations.listTorrents();
@@ -158,13 +146,9 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		} catch {
 			if (!mounted.current) return;
 			if (list.status === "loaded") {
-				if (origin === "poll") {
-					if (pollWarningShown.current) return;
-					pollWarningShown.current = true;
-					showMessage("Refresh failed", "warning");
-				} else {
-					showMessage("Refresh failed");
-				}
+				if (pollWarningShown.current) return;
+				pollWarningShown.current = true;
+				showMessage("Refresh failed", "warning");
 			} else setList({ status: "failed", activity: { kind: "idle" } });
 		} finally {
 			busy.current = false;
@@ -172,9 +156,9 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	}
 
 	useTorrentPolling({
-		enabled: list.status === "loaded",
+		enabled: list.status !== "loading",
 		onTick: () => {
-			void refresh("poll");
+			void refresh();
 		},
 	});
 
@@ -389,8 +373,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		// Ignore held network shortcuts.
 		if (
 			key.repeated &&
-			(key.name === keybinds.refresh.key ||
-				key.name === keybinds.start.key ||
+			(key.name === keybinds.start.key ||
 				key.name === keybinds.stop.key ||
 				key.name === keybinds.add.key ||
 				key.name === keybinds.remove.key)
@@ -401,11 +384,6 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		// Open the add dialog.
 		if (key.name === keybinds.add.key) {
 			openAdd();
-			return;
-		}
-		// Refresh the torrent list.
-		if (key.name === keybinds.refresh.key) {
-			void refresh();
 			return;
 		}
 		// Start the selected torrent.

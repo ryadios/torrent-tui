@@ -130,9 +130,8 @@ describe("useTorrentPolling", () => {
 });
 
 describe("App polling", () => {
-	test("updates rows silently, preserves selection, and skips a busy refresh", async () => {
+	test("updates rows silently, preserves selection, and skips overlapping polls", async () => {
 		const initial = Promise.withResolvers<TorrentList>();
-		const manual = Promise.withResolvers<TorrentList>();
 		const poll = Promise.withResolvers<TorrentList>();
 		const interval = interceptInterval();
 		let listCalls = 0;
@@ -141,7 +140,6 @@ describe("App polling", () => {
 				operations={withListRequest(() => {
 					listCalls += 1;
 					if (listCalls === 1) return initial.promise;
-					if (listCalls === 2) return manual.promise;
 					return poll.promise;
 				})}
 				onQuit={() => {}}
@@ -166,28 +164,12 @@ describe("App polling", () => {
 			act(() => setup.mockInput.pressArrow("down"));
 			await setup.renderOnce();
 
-			act(() => setup.mockInput.pressKey("r"));
+			act(() => interval.tick());
 			await setup.renderOnce();
 			act(() => interval.tick());
 			await setup.renderOnce();
 
 			expect(listCalls).toBe(2);
-			expect(setup.captureCharFrame()).toContain("Refreshing…");
-
-			await act(async () => {
-				manual.resolve({
-					torrents: [
-						torrent("hash-1", "First torrent"),
-						torrent("hash-2", "Second torrent"),
-					],
-				});
-				await manual.promise;
-			});
-			await setup.renderOnce();
-
-			act(() => interval.tick());
-			await setup.renderOnce();
-			expect(listCalls).toBe(3);
 			expect(setup.captureCharFrame()).not.toContain("Refreshing…");
 
 			await act(async () => {

@@ -25,7 +25,6 @@ export function Footer({
 				...(hasSelection
 					? [keybinds.start, keybinds.stop, keybinds.remove]
 					: []),
-				keybinds.refresh,
 				keybinds.quit,
 			];
 
