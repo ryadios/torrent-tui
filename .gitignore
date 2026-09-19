@@ -38,3 +38,6 @@ docs/
 
 # Local agent resources
 .agents/
+
+# torrent files
+*.torrent
