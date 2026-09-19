@@ -52,7 +52,8 @@ src/
     ├── theme.ts                      # Define Tokyo Night theme values
     ├── torrent-browser.tsx           # Browse readable directories and torrent files
     ├── torrent-list.tsx              # Render the torrent list and rows
-    └── torrent-paths.ts              # Resolve and suggest local torrent paths
+    ├── torrent-paths.ts              # Resolve and suggest local torrent paths
+    └── use-torrent-polling.ts        # Schedule TUI-only live torrent refreshes
 
 tests/
 └── unit/                              # Daemon-free unit and renderer tests

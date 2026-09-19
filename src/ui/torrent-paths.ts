@@ -1,5 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { expandTorrentPath, isRemoteTorrentSource } from "../torrent/source";
 
 export type TorrentPathEntry = {
@@ -11,6 +12,21 @@ export type TorrentPathEntry = {
 export type TorrentPathSuggestion = TorrentPathEntry & {
 	value: string;
 };
+
+export function compactTorrentPath(path: string): string {
+	const relativePath = relative(homedir(), path);
+
+	if (relativePath === "") return "~";
+	if (
+		relativePath === ".." ||
+		relativePath.startsWith(`..${sep}`) ||
+		isAbsolute(relativePath)
+	) {
+		return path;
+	}
+
+	return `~/${relativePath.split(sep).join("/")}`;
+}
 
 export async function readTorrentDirectory(
 	directory: string,

@@ -15,10 +15,6 @@ export const keybinds = {
 		key: "d",
 		label: "remove",
 	},
-	refresh: {
-		key: "r",
-		label: "refresh",
-	},
 	quit: {
 		key: "q",
 		label: "quit",

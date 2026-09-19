@@ -217,6 +217,7 @@ export function AddDialog({
 				</text>
 				<input
 					ref={inputRef}
+					width="100%"
 					value={source}
 					focused={focus === "source" && !pending}
 					placeholder="Magnet, URL, or .torrent path"

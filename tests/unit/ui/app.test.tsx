@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { RGBA } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
@@ -48,6 +48,31 @@ function torrent(hash: string, name: string): TorrentSummary {
 	};
 }
 
+function interceptInterval() {
+	let callback: Bun.TimerHandler | undefined;
+	const handle = {} as Timer;
+	const timerApi = globalThis as {
+		setInterval: (handler: Bun.TimerHandler, timeout?: number) => Timer;
+		clearInterval: (handle?: Timer) => void;
+	};
+	const setIntervalSpy = spyOn(timerApi, "setInterval");
+	const clearIntervalSpy = spyOn(timerApi, "clearInterval");
+
+	setIntervalSpy.mockImplementation((handler) => {
+		callback = handler;
+		return handle;
+	});
+	clearIntervalSpy.mockImplementation(() => {});
+
+	return {
+		tick: () => callback?.(),
+		restore: () => {
+			setIntervalSpy.mockRestore();
+			clearIntervalSpy.mockRestore();
+		},
+	};
+}
+
 describe("App", () => {
 	test("renders the normal shell", async () => {
 		const setup = await testRender(
@@ -69,7 +94,7 @@ describe("App", () => {
 			expect(frame).toContain(`v${packageJson.version}`);
 			expect(frame).toContain("( o.o )");
 			expect(frame).toContain("Loading torrents...");
-			expect(frame).toContain("r refresh");
+			expect(frame).not.toContain("r refresh");
 			expect(frame).toContain("q quit");
 			expect(frame).not.toContain("^c");
 			expect(titleLine?.startsWith(" ┌")).toBe(true);
@@ -162,77 +187,6 @@ describe("App", () => {
 		}
 	});
 
-	test("refreshes once while preserving rows and selection by hash", async () => {
-		const initial = Promise.withResolvers<TorrentList>();
-		const refresh = Promise.withResolvers<TorrentList>();
-		let listCalls = 0;
-		const setup = await testRender(
-			<App
-				operations={withListRequest(() => {
-					listCalls += 1;
-					return listCalls === 1 ? initial.promise : refresh.promise;
-				})}
-				onQuit={() => {}}
-			/>,
-			{ width: 100, height: 10 },
-		);
-
-		try {
-			await setup.renderOnce();
-			await act(async () => {
-				initial.resolve({
-					torrents: [
-						torrent("hash-1", "First torrent"),
-						torrent("hash-2", "Second torrent"),
-					],
-				});
-				await initial.promise;
-			});
-			await setup.renderOnce();
-			act(() => setup.mockInput.pressArrow("down"));
-			await setup.renderOnce();
-			act(() => {
-				setup.mockInput.pressKey("r");
-				setup.mockInput.pressKey("r");
-			});
-			await setup.renderOnce();
-
-			expect(listCalls).toBe(2);
-			expect(setup.captureCharFrame()).toContain("First torrent");
-			expect(setup.captureCharFrame()).toContain("Refreshing…");
-			expect(setup.captureCharFrame()).toContain("r refresh");
-
-			await act(async () => {
-				refresh.resolve({
-					torrents: [
-						torrent("hash-2", "Second torrent"),
-						torrent("hash-1", "First torrent"),
-					],
-				});
-				await refresh.promise;
-			});
-			await setup.renderOnce();
-
-			const selectedLine = setup
-				.captureSpans()
-				.lines.find((line) =>
-					line.spans.some((span) =>
-						span.text.includes("Second torrent"),
-					),
-				);
-			expect(
-				selectedLine?.spans.some(
-					(span) =>
-						span.text.includes("│") &&
-						span.fg.equals(RGBA.fromHex(theme.primary)),
-				),
-			).toBe(true);
-			expect(setup.captureCharFrame()).not.toContain("Refreshing…");
-		} finally {
-			act(() => setup.renderer.destroy());
-		}
-	});
-
 	test("starts the selected torrent once while navigation and quit remain available", async () => {
 		const initial = Promise.withResolvers<TorrentList>();
 		const mutation = Promise.withResolvers<void>();
@@ -286,7 +240,6 @@ describe("App", () => {
 				setup.mockInput.pressKey("s");
 				setup.mockInput.pressKey("s");
 				setup.mockInput.pressKey("p");
-				setup.mockInput.pressKey("r");
 				setup.mockInput.pressArrow("up");
 				setup.mockInput.pressKey("q");
 			});
@@ -299,7 +252,6 @@ describe("App", () => {
 			expect(quitCalls).toBe(1);
 			expect(busyFrame).toContain("Starting…");
 			expect(busyFrame).toContain("s start  p stop  d remove");
-			expect(busyFrame).toContain("r refresh");
 			expect(busyFrame).toContain("q quit");
 			expect(busyFrame).not.toContain("^c");
 
@@ -420,9 +372,10 @@ describe("App", () => {
 		}
 	});
 
-	test("keeps operation failures until the next network operation", async () => {
+	test("clears operation failures after a successful poll", async () => {
 		const initial = Promise.withResolvers<TorrentList>();
 		const refresh = Promise.withResolvers<TorrentList>();
+		const interval = interceptInterval();
 		let listCalls = 0;
 		const setup = await testRender(
 			<App
@@ -465,12 +418,20 @@ describe("App", () => {
 			await setup.renderOnce();
 			expect(setup.captureCharFrame()).toContain("Stop failed");
 
-			act(() => setup.mockInput.pressKey("r"));
+			act(() => interval.tick());
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("Refreshing…");
+			expect(setup.captureCharFrame()).toContain("Stop failed");
+			await act(async () => {
+				refresh.resolve({
+					torrents: [torrent("hash-1", "Existing torrent")],
+				});
+				await refresh.promise;
+			});
+			await setup.renderOnce();
 			expect(setup.captureCharFrame()).not.toContain("Stop failed");
 		} finally {
 			act(() => setup.renderer.destroy());
+			interval.restore();
 		}
 	});
 
@@ -531,7 +492,6 @@ describe("App", () => {
 
 			act(() => {
 				setup.mockInput.pressKey("q");
-				setup.mockInput.pressKey("r");
 				setup.mockInput.pressEnter();
 			});
 			await setup.renderOnce();
@@ -702,7 +662,7 @@ describe("App", () => {
 		}
 	});
 
-	test("ignores modified network shortcuts", async () => {
+	test("ignores modified start and stop shortcuts", async () => {
 		const request = Promise.withResolvers<TorrentList>();
 		let listCalls = 0;
 		let startCalls = 0;
@@ -738,7 +698,6 @@ describe("App", () => {
 			await setup.renderOnce();
 
 			act(() => {
-				setup.mockInput.pressKey("r", { ctrl: true });
 				setup.mockInput.pressKey("s", { meta: true });
 				setup.mockInput.pressKey("p", { shift: true });
 			});
@@ -805,7 +764,6 @@ describe("App", () => {
 					repeated: true,
 				});
 			act(() => {
-				repeat("r");
 				repeat("s");
 				repeat("p");
 				repeat("j");
@@ -844,6 +802,7 @@ describe("App", () => {
 			replacementRequest.promise,
 			emptyRequest.promise,
 		];
+		const interval = interceptInterval();
 		const setup = await testRender(
 			<App
 				operations={withListRequest(() =>
@@ -868,7 +827,7 @@ describe("App", () => {
 			await setup.renderOnce();
 			act(() => setup.mockInput.pressKey("END"));
 			await setup.renderOnce();
-			act(() => setup.mockInput.pressKey("r"));
+			act(() => interval.tick());
 			await setup.renderOnce();
 			await act(async () => {
 				replacementRequest.resolve({
@@ -893,7 +852,7 @@ describe("App", () => {
 				),
 			).toBe(true);
 
-			act(() => setup.mockInput.pressKey("r"));
+			act(() => interval.tick());
 			await setup.renderOnce();
 			await act(async () => {
 				emptyRequest.resolve({ torrents: [] });
@@ -903,12 +862,14 @@ describe("App", () => {
 			expect(setup.captureCharFrame()).toContain("No torrents");
 		} finally {
 			act(() => setup.renderer.destroy());
+			interval.restore();
 		}
 	});
 
 	test("keeps existing rows and reports a refresh failure", async () => {
 		const initial = Promise.withResolvers<TorrentList>();
 		const refresh = Promise.withResolvers<TorrentList>();
+		const interval = interceptInterval();
 		let listCalls = 0;
 		const setup = await testRender(
 			<App
@@ -930,7 +891,7 @@ describe("App", () => {
 				await initial.promise;
 			});
 			await setup.renderOnce();
-			act(() => setup.mockInput.pressKey("r"));
+			act(() => interval.tick());
 			await setup.renderOnce();
 			await act(async () => {
 				refresh.reject(new Error("private transport detail"));
@@ -946,15 +907,17 @@ describe("App", () => {
 			expect(frame).toContain("Existing torrent");
 			expect(frame).toContain("Refresh failed");
 			expect(frame).not.toContain("private transport detail");
-			expect(failure?.fg.equals(RGBA.fromHex(theme.error))).toBe(true);
+			expect(failure?.fg.equals(RGBA.fromHex(theme.warning))).toBe(true);
 		} finally {
 			act(() => setup.renderer.destroy());
+			interval.restore();
 		}
 	});
 
-	test("retries an initial load failure with the refresh key", async () => {
+	test("recovers an initial load failure on the next poll", async () => {
 		const initial = Promise.withResolvers<TorrentList>();
 		const retry = Promise.withResolvers<TorrentList>();
+		const interval = interceptInterval();
 		let listCalls = 0;
 		const setup = await testRender(
 			<App
@@ -978,9 +941,12 @@ describe("App", () => {
 				"Unable to load torrents",
 			);
 
-			act(() => setup.mockInput.pressKey("r"));
+			act(() => interval.tick());
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("Loading torrents...");
+			expect(listCalls).toBe(2);
+			expect(setup.captureCharFrame()).toContain(
+				"Unable to load torrents",
+			);
 			await act(async () => {
 				retry.resolve({
 					torrents: [torrent("hash-1", "Recovered torrent")],
@@ -989,10 +955,10 @@ describe("App", () => {
 			});
 			await setup.renderOnce();
 
-			expect(listCalls).toBe(2);
 			expect(setup.captureCharFrame()).toContain("Recovered torrent");
 		} finally {
 			act(() => setup.renderer.destroy());
+			interval.restore();
 		}
 	});
 
@@ -1198,7 +1164,6 @@ describe("App", () => {
 
 			expect(frame).toContain("torrent-tui");
 			expect(frame).not.toContain(`v${packageJson.version}`);
-			expect(frame).toContain("r refresh");
 			expect(frame).toContain("q quit");
 			expect(frame).not.toContain("^c");
 		} finally {
