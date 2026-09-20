@@ -1,29 +1,33 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
+import type { BoxRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { stringWidth } from "bun";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TorrentSummary } from "../transmission/types/torrent";
 import { FullBorder } from "./borders";
 import { ProgressBar } from "./progress-bar";
 import { theme } from "./theme";
 
-const COMPACT_WIDTH = 100;
-const STATUS_WIDTH = 24;
-const COMPACT_STATUS_WIDTH = 12;
-const FULL_PROGRESS_WIDTH = 15;
-const COMPACT_PROGRESS_WIDTH = 8;
+const MIN_NAME_WIDTH = 24;
+const STATUS_WIDTH = 12;
+const ETA_WIDTH = 9;
+const SIZE_WIDTH = 11;
+const RATE_WIDTH = 13;
+const COLUMN_GAP = 2;
+const NAME_CONTENT_GAP = 1;
+const INLINE_PROGRESS_WIDTH = 12;
+const CONTENT_PADDING = 3;
 
 type TorrentListProps = {
 	torrents: TorrentSummary[];
 	selectedHash?: string;
 };
 
-type ColumnWidths = {
-	name: number;
-	status: number;
-	progress: number;
-	download: number;
-	upload: number;
+type TorrentLayout = {
+	nameWidth: number;
+	showStatus: boolean;
+	showEta: boolean;
+	showSize: boolean;
+	showRates: boolean;
 };
 
 const statuses: Record<number, string> = {
@@ -62,47 +66,142 @@ function formatRate(bytesPerSecond: number): string {
 	return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-function widest(values: string[]): number {
-	return Math.max(...values.map((value) => stringWidth(value)));
+function formatEta(eta: number): string {
+	if (!Number.isFinite(eta) || eta < 0) return "Unknown";
+
+	const seconds = Math.floor(eta);
+	if (seconds < 60) return `${seconds} sec`;
+	if (seconds < 60 * 60) return `${Math.floor(seconds / 60)} min`;
+	if (seconds < 60 * 60 * 24) {
+		return `${Math.floor(seconds / (60 * 60))} hrs`;
+	}
+	if (seconds < 60 * 60 * 24 * 30) {
+		return `${Math.floor(seconds / (60 * 60 * 24))} days`;
+	}
+	if (seconds < 60 * 60 * 24 * 30 * 12) {
+		return `${Math.floor(seconds / (60 * 60 * 24 * 30))} months`;
+	}
+	if (seconds < 60 * 60 * 24 * 365 * 1000) {
+		return `${Math.floor(seconds / (60 * 60 * 24 * 365))} years`;
+	}
+
+	return "∞";
 }
 
-function getColumnWidths(
-	torrents: TorrentSummary[],
-	compact: boolean,
-): ColumnWidths {
+function formatSize(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) return "—";
+
+	const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+	let value = bytes;
+	let unitIndex = 0;
+
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex += 1;
+	}
+
+	return unitIndex === 0
+		? `${Math.round(value)} ${units[unitIndex]}`
+		: `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function getTorrentLayout(width: number): TorrentLayout {
+	const contentWidth = Math.max(0, Math.floor(width) - CONTENT_PADDING);
+	let fixedWidth = 0;
+	let fixedColumns = 0;
+
+	function addColumns(widthToAdd: number, columnsToAdd = 1): boolean {
+		const nextFixedWidth = fixedWidth + widthToAdd;
+		const nextFixedColumns = fixedColumns + columnsToAdd;
+		if (
+			MIN_NAME_WIDTH + nextFixedWidth + nextFixedColumns * COLUMN_GAP >
+			contentWidth
+		) {
+			return false;
+		}
+
+		fixedWidth = nextFixedWidth;
+		fixedColumns = nextFixedColumns;
+		return true;
+	}
+
+	const showStatus = addColumns(STATUS_WIDTH);
+	const showEta = showStatus && addColumns(ETA_WIDTH);
+	const showRates = showEta && addColumns(RATE_WIDTH * 2, 2);
+	const showSize = showRates && addColumns(SIZE_WIDTH);
+
 	return {
-		name: widest(["Name", ...torrents.map((torrent) => torrent.name)]),
-		status: Math.min(
-			compact ? COMPACT_STATUS_WIDTH : STATUS_WIDTH,
-			widest(["Status", ...torrents.map(formatStatus)]),
+		nameWidth: Math.max(
+			0,
+			contentWidth - fixedWidth - fixedColumns * COLUMN_GAP,
 		),
-		progress: compact ? COMPACT_PROGRESS_WIDTH : FULL_PROGRESS_WIDTH,
-		download: widest([
-			"Download",
-			...torrents.map(
-				(torrent) => `↓ ${formatRate(torrent.rate_download)}`,
-			),
-		]),
-		upload: widest([
-			"Upload",
-			...torrents.map(
-				(torrent) => `↑ ${formatRate(torrent.rate_upload)}`,
-			),
-		]),
+		showStatus,
+		showEta,
+		showSize,
+		showRates,
 	};
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function truncateTorrentName(name: string, maxWidth: number): string {
+	if (stringWidth(name) <= maxWidth) return name;
+	if (maxWidth <= 0) return "";
+
+	let result = "";
+	let width = 0;
+
+	for (const { segment } of graphemes.segment(name)) {
+		const segmentWidth = stringWidth(segment);
+		if (width + segmentWidth > maxWidth - 1) break;
+		result += segment;
+		width += segmentWidth;
+	}
+
+	return `${result}…`;
+}
+
+function TorrentCell({ children, width }: { children: string; width: number }) {
+	return (
+		<box
+			style={{
+				width,
+				flexShrink: 0,
+				overflow: "hidden",
+				height: 1,
+			}}
+		>
+			<text
+				fg={theme.textMuted}
+				selectable={false}
+				wrapMode="none"
+				truncate
+			>
+				{children}
+			</text>
+		</box>
+	);
 }
 
 function TorrentRow({
 	torrent,
-	compact,
+	layout,
 	selected,
-	widths,
 }: {
 	torrent: TorrentSummary;
-	compact: boolean;
+	layout: TorrentLayout;
 	selected: boolean;
-	widths: ColumnWidths;
 }) {
+	const progressWidth = Math.min(
+		INLINE_PROGRESS_WIDTH,
+		Math.max(0, layout.nameWidth - NAME_CONTENT_GAP),
+	);
+	const nameWidth = Math.max(
+		0,
+		layout.nameWidth -
+			(progressWidth > 0 ? progressWidth + NAME_CONTENT_GAP : 0),
+	);
+
 	return (
 		<box
 			id={`torrent-${torrent.hash_string}`}
@@ -115,90 +214,75 @@ function TorrentRow({
 			style={{
 				flexDirection: "row",
 				flexShrink: 0,
+				height: 1,
 				paddingLeft: 1,
-				columnGap: 2,
+				paddingRight: 1,
+				columnGap: COLUMN_GAP,
 				width: "100%",
 			}}
 		>
 			<box
 				style={{
-					width: widths.name,
-					flexShrink: 1,
-					minWidth: 0,
+					width: layout.nameWidth,
+					flexShrink: 0,
 					overflow: "hidden",
+					flexDirection: "row",
+					columnGap: NAME_CONTENT_GAP,
 				}}
 			>
 				<text
 					fg={theme.text}
 					selectable={false}
 					wrapMode="none"
-					truncate
+					style={{ width: nameWidth, flexShrink: 0 }}
 				>
-					{torrent.name}
+					{truncateTorrentName(torrent.name, nameWidth)}
 				</text>
+				{progressWidth > 0 ? (
+					<ProgressBar
+						width={progressWidth}
+						percentDone={torrent.percent_done}
+					/>
+				) : null}
 			</box>
-			<box
-				style={{
-					width: widths.status,
-					flexShrink: 0,
-					overflow: "hidden",
-				}}
-			>
-				<text
-					fg={theme.textMuted}
-					selectable={false}
-					wrapMode="none"
-					truncate
-				>
+			{layout.showStatus ? (
+				<TorrentCell width={STATUS_WIDTH}>
 					{formatStatus(torrent)}
-				</text>
-			</box>
-			<box style={{ width: widths.progress, flexShrink: 0 }}>
-				<ProgressBar
-					percentDone={torrent.percent_done}
-					compact={compact}
-				/>
-			</box>
-			{compact ? null : (
+				</TorrentCell>
+			) : null}
+			{layout.showEta ? (
+				<TorrentCell width={ETA_WIDTH}>
+					{formatEta(torrent.eta)}
+				</TorrentCell>
+			) : null}
+			{layout.showSize ? (
+				<TorrentCell width={SIZE_WIDTH}>
+					{formatSize(torrent.total_size)}
+				</TorrentCell>
+			) : null}
+			{layout.showRates ? (
 				<>
-					<box style={{ width: widths.download, flexShrink: 0 }}>
-						<text
-							fg={theme.textMuted}
-							selectable={false}
-							wrapMode="none"
-						>
-							{`↓ ${formatRate(torrent.rate_download)}`}
-						</text>
-					</box>
-					<box style={{ width: widths.upload, flexShrink: 0 }}>
-						<text
-							fg={theme.textMuted}
-							selectable={false}
-							wrapMode="none"
-						>
-							{`↑ ${formatRate(torrent.rate_upload)}`}
-						</text>
-					</box>
+					<TorrentCell width={RATE_WIDTH}>
+						{`↓ ${formatRate(torrent.rate_download)}`}
+					</TorrentCell>
+					<TorrentCell width={RATE_WIDTH}>
+						{`↑ ${formatRate(torrent.rate_upload)}`}
+					</TorrentCell>
 				</>
-			)}
+			) : null}
 		</box>
 	);
 }
 
-function TorrentListHeader({
-	compact,
-	widths,
-}: {
-	compact: boolean;
-	widths: ColumnWidths;
-}) {
+function TorrentListHeader({ layout }: { layout: TorrentLayout }) {
 	return (
 		<box
 			style={{
 				flexDirection: "row",
 				flexShrink: 0,
 				paddingLeft: 2,
-				columnGap: 2,
+				paddingRight: 1,
+				columnGap: COLUMN_GAP,
 				width: "100%",
 			}}
 		>
@@ -207,34 +291,50 @@ function TorrentListHeader({
 				selectable={false}
 				wrapMode="none"
 				truncate
-				style={{ width: widths.name, flexShrink: 1, minWidth: 0 }}
+				style={{ width: layout.nameWidth, flexShrink: 0 }}
 			>
 				Name
 			</text>
-			<text
-				fg={theme.textMuted}
-				selectable={false}
-				wrapMode="none"
-				truncate
-				style={{ width: widths.status, flexShrink: 0 }}
-			>
-				Status
-			</text>
-			<text
-				fg={theme.textMuted}
-				selectable={false}
-				wrapMode="none"
-				style={{ width: widths.progress, flexShrink: 0 }}
-			>
-				Progress
-			</text>
-			{compact ? null : (
+			{layout.showStatus ? (
+				<text
+					fg={theme.textMuted}
+					selectable={false}
+					wrapMode="none"
+					truncate
+					style={{ width: STATUS_WIDTH, flexShrink: 0 }}
+				>
+					Status
+				</text>
+			) : null}
+			{layout.showEta ? (
+				<text
+					fg={theme.textMuted}
+					selectable={false}
+					wrapMode="none"
+					truncate
+					style={{ width: ETA_WIDTH, flexShrink: 0 }}
+				>
+					ETA
+				</text>
+			) : null}
+			{layout.showSize ? (
+				<text
+					fg={theme.textMuted}
+					selectable={false}
+					wrapMode="none"
+					truncate
+					style={{ width: SIZE_WIDTH, flexShrink: 0 }}
+				>
+					Size
+				</text>
+			) : null}
+			{layout.showRates ? (
 				<>
 					<text
 						fg={theme.textMuted}
 						selectable={false}
 						wrapMode="none"
-						style={{ width: widths.download, flexShrink: 0 }}
+						style={{ width: RATE_WIDTH, flexShrink: 0 }}
 					>
 						Download
 					</text>
@@ -242,21 +342,22 @@ function TorrentListHeader({
 						fg={theme.textMuted}
 						selectable={false}
 						wrapMode="none"
-						style={{ width: widths.upload, flexShrink: 0 }}
+						style={{ width: RATE_WIDTH, flexShrink: 0 }}
 					>
 						Upload
 					</text>
 				</>
-			)}
+			) : null}
 		</box>
 	);
 }
 
 export function TorrentList({ torrents, selectedHash }: TorrentListProps) {
-	const { width } = useTerminalDimensions();
+	const { width: terminalWidth } = useTerminalDimensions();
+	const [listWidth, setListWidth] = useState(0);
+	const listRef = useRef<BoxRenderable | null>(null);
 	const scrollRef = useRef<ScrollBoxRenderable | null>(null);
-	const compact = width < COMPACT_WIDTH;
-	const widths = getColumnWidths(torrents, compact);
+	const layout = getTorrentLayout(listWidth || terminalWidth);
 	const selectedIndex = selectedHash
 		? torrents.findIndex((torrent) => torrent.hash_string === selectedHash)
 		: -1;
@@ -268,8 +369,20 @@ export function TorrentList({ torrents, selectedHash }: TorrentListProps) {
 	}, [selectedHash, selectedIndex]);
 
 	return (
-		<box flexGrow={1} minHeight={0} flexDirection="column" rowGap={1}>
-			<TorrentListHeader compact={compact} widths={widths} />
+		<box
+			ref={listRef}
+			onSizeChange={() => {
+				const nextWidth = listRef.current?.width ?? 0;
+				setListWidth((currentWidth) =>
+					currentWidth === nextWidth ? currentWidth : nextWidth,
+				);
+			}}
+			flexGrow={1}
+			minHeight={0}
+			flexDirection="column"
+			rowGap={1}
+		>
+			<TorrentListHeader layout={layout} />
 			<scrollbox
 				ref={scrollRef}
 				focusable={false}
@@ -292,9 +405,8 @@ export function TorrentList({ torrents, selectedHash }: TorrentListProps) {
 						<TorrentRow
 							key={torrent.hash_string}
 							torrent={torrent}
-							compact={compact}
+							layout={layout}
 							selected={torrent.hash_string === selectedHash}
-							widths={widths}
 						/>
 					))
 				)}
