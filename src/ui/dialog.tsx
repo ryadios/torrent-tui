@@ -1,6 +1,7 @@
 import { RGBA } from "@opentui/core";
 import { createPortal, useRenderer } from "@opentui/react";
 import type { ReactNode } from "react";
+import { FullBorder } from "./borders";
 import { theme } from "./theme";
 
 type DialogProps = {
@@ -67,6 +68,9 @@ export function Dialog({ title, children, height = "auto" }: DialogProps) {
 			}}
 		>
 			<box
+				border={FullBorder.border}
+				customBorderChars={FullBorder.customBorderChars}
+				borderColor={theme.borderSubtle}
 				style={{
 					width: "80%",
 					maxWidth: 72,
@@ -79,9 +83,21 @@ export function Dialog({ title, children, height = "auto" }: DialogProps) {
 					rowGap: 1,
 				}}
 			>
-				<text fg={theme.text} selectable={false}>
-					{title}
-				</text>
+				<box
+					style={{
+						position: "absolute",
+						top: -1,
+						left: 2,
+						paddingLeft: 1,
+						paddingRight: 1,
+						flexShrink: 0,
+						backgroundColor: theme.backgroundPanel,
+					}}
+				>
+					<text fg={theme.primary} selectable={false}>
+						{title}
+					</text>
+				</box>
 				{children}
 			</box>
 		</box>,
