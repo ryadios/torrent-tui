@@ -8,6 +8,8 @@ export type TorrentSummary = {
 	rate_upload: number;
 	eta: number;
 	total_size: number;
+	upload_ratio: number;
+	peers_connected: number;
 	is_finished: boolean;
 	error: number;
 	error_string: string;

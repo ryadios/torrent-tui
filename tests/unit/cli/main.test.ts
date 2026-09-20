@@ -61,6 +61,8 @@ function torrent(
 		rate_upload: 0,
 		eta: 0,
 		total_size: 1,
+		upload_ratio: 0,
+		peers_connected: 0,
 		is_finished: false,
 		error: 0,
 		error_string: "",

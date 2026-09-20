@@ -138,6 +138,8 @@ export class TransmissionClient {
 				"rate_upload",
 				"eta",
 				"total_size",
+				"upload_ratio",
+				"peers_connected",
 				"is_finished",
 				"error",
 				"error_string",
