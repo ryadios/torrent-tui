@@ -6,42 +6,51 @@ import { ProgressBar } from "../../../src/ui/progress-bar";
 import { theme } from "../../../src/ui/theme";
 
 describe("ProgressBar", () => {
-	test("renders a ten-cell progress rule", async () => {
-		const setup = await testRender(<ProgressBar percentDone={0.52} />, {
-			width: 30,
-			height: 1,
-		});
+	test("renders a centered progress rail at the requested width", async () => {
+		const setup = await testRender(
+			<ProgressBar percentDone={0.52} width={32} />,
+			{
+				width: 40,
+				height: 1,
+			},
+		);
 
 		try {
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("━━━━━━━━━━ 52%");
+			expect(setup.captureCharFrame()).toContain("52%");
+			expect(setup.captureCharFrame().split("\n")[0]?.trim().length).toBe(
+				32,
+			);
 		} finally {
 			act(() => setup.renderer.destroy());
 		}
 	});
 
 	test("distinguishes completed progress with the primary color", async () => {
-		const setup = await testRender(<ProgressBar percentDone={0.52} />, {
-			width: 30,
-			height: 1,
-		});
+		const setup = await testRender(
+			<ProgressBar percentDone={0.52} width={24} />,
+			{
+				width: 30,
+				height: 1,
+			},
+		);
 
 		try {
 			await setup.renderOnce();
 			const spans = setup.captureSpans().lines[0]?.spans ?? [];
-			const completed = spans.find(
-				(span) =>
-					span.text === "━━━━━" &&
-					span.fg.equals(RGBA.fromHex(theme.primary)),
+			const completed = spans.find((span) =>
+				span.fg.equals(RGBA.fromHex(theme.primary)),
 			);
+			const percentage = spans.find((span) => span.text.includes("52%"));
 			const remaining = spans.find((span) =>
-				span.text.includes("━━━━━ 52%"),
+				span.fg.equals(RGBA.fromHex(theme.borderSubtle)),
 			);
 
 			expect(completed?.fg.equals(RGBA.fromHex(theme.primary))).toBe(
 				true,
 			);
-			expect(remaining?.fg.equals(RGBA.fromHex(theme.textMuted))).toBe(
+			expect(percentage?.fg.equals(RGBA.fromHex(theme.text))).toBe(true);
+			expect(remaining?.fg.equals(RGBA.fromHex(theme.borderSubtle))).toBe(
 				true,
 			);
 		} finally {
@@ -49,11 +58,11 @@ describe("ProgressBar", () => {
 		}
 	});
 
-	test("clamps full progress and supports compact output", async () => {
+	test("clamps full progress and supports percentage-only output", async () => {
 		const setup = await testRender(
 			<box>
-				<ProgressBar percentDone={2} />
-				<ProgressBar percentDone={-1} compact />
+				<ProgressBar percentDone={2} width={24} />
+				<ProgressBar percentDone={-1} width={4} />
 			</box>,
 			{ width: 30, height: 2 },
 		);
@@ -62,7 +71,8 @@ describe("ProgressBar", () => {
 			await setup.renderOnce();
 			const frame = setup.captureCharFrame();
 
-			expect(frame).toContain("━━━━━━━━━━ 100%");
+			expect(frame).toContain("100%");
+			expect(frame).toContain("━━━━━━━━━ 100% ━━━━━━━━━");
 			expect(frame).toContain("0%");
 		} finally {
 			act(() => setup.renderer.destroy());
