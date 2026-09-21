@@ -15,8 +15,10 @@ function torrent(overrides: Partial<TorrentSummary> = {}): TorrentSummary {
 		percent_done: 0.52,
 		rate_download: 1_572_864,
 		rate_upload: 256,
-		eta: 0,
-		total_size: 1,
+		eta: 180,
+		total_size: 1_572_864,
+		upload_ratio: 0.5,
+		peers_connected: 4,
 		is_finished: false,
 		error: 0,
 		error_string: "",
@@ -24,8 +26,17 @@ function torrent(overrides: Partial<TorrentSummary> = {}): TorrentSummary {
 	};
 }
 
+type RendererSetup = Awaited<ReturnType<typeof testRender>>;
+
+async function renderFrame(setup: RendererSetup): Promise<void> {
+	await act(async () => {
+		await setup.renderOnce();
+		await setup.flush({ maxPasses: 2 });
+	});
+}
+
 describe("TorrentList", () => {
-	test("renders torrents in order with status, progress, and rates", async () => {
+	test("renders one-line torrents with balanced columns", async () => {
 		const setup = await testRender(
 			<TorrentList
 				torrents={[
@@ -37,11 +48,11 @@ describe("TorrentList", () => {
 					}),
 				]}
 			/>,
-			{ width: 120, height: 6 },
+			{ width: 120, height: 8 },
 		);
 
 		try {
-			await setup.renderOnce();
+			await renderFrame(setup);
 			const frame = setup.captureCharFrame();
 			const lines = frame.split("\n");
 			const header = lines.find((line) => line.includes("Name"));
@@ -54,21 +65,27 @@ describe("TorrentList", () => {
 				frame.indexOf("Second torrent"),
 			);
 			expect(header).toContain("Status");
-			expect(header).toContain("Progress");
+			expect(header).toContain("ETA");
+			expect(header).toContain("Size");
 			expect(header).toContain("Download");
 			expect(header).toContain("Upload");
+			expect(header).not.toContain("Progress");
+			expect(header).not.toContain("Ratio");
+			expect(header).not.toContain("Peers");
+			expect(first?.indexOf("First torrent")).toBe(
+				header?.indexOf("Name"),
+			);
 			expect(first?.indexOf("Downloading")).toBe(
 				header?.indexOf("Status"),
 			);
-			expect(first?.indexOf("━━━━━━━━━━")).toBe(
-				header?.indexOf("Progress"),
-			);
+			expect(first?.indexOf("3 min")).toBe(header?.indexOf("ETA"));
+			expect(first?.indexOf("1.5 MiB")).toBe(header?.indexOf("Size"));
 			expect(first?.indexOf("↓")).toBe(header?.indexOf("Download"));
 			expect(first?.indexOf("↑")).toBe(header?.indexOf("Upload"));
 			expect(second?.indexOf("Seeding")).toBe(header?.indexOf("Status"));
+			expect(first).toContain("━━━ 52% ━━━━");
 			expect(frame).toContain("Downloading");
 			expect(frame).toContain("Seeding");
-			expect(frame).toContain("━━━━━━━━━━ 52%");
 			expect(frame).toContain("1.5 MiB/s");
 			expect(frame).toContain("256 B/s");
 		} finally {
@@ -80,7 +97,14 @@ describe("TorrentList", () => {
 		const setup = await testRender(
 			<TorrentList
 				torrents={[
-					torrent({ status: 99, name: "Unknown" }),
+					torrent({
+						status: 99,
+						name: "Unknown",
+						eta: -1,
+						total_size: 0,
+						upload_ratio: -1,
+						peers_connected: 3,
+					}),
 					torrent({
 						hash_string: "hash-2",
 						name: "Failed",
@@ -94,25 +118,28 @@ describe("TorrentList", () => {
 					}),
 				]}
 			/>,
-			{ width: 120, height: 8 },
+			{ width: 120, height: 11 },
 		);
 
 		try {
-			await setup.renderOnce();
+			await renderFrame(setup);
 			const frame = setup.captureCharFrame();
 			const lines = frame.split("\n");
-			const header = lines.find((line) => line.includes("Progress"));
-			const failed = lines.find((line) => line.includes("Failed"));
+			const header = lines.find((line) => line.includes("Name"));
+			const errored = lines.find((line) => line.includes("Erro"));
 
 			expect(frame).toContain("Status 99");
+			expect(frame).toContain("Unknown");
+			expect(frame).toContain("0 B");
 			expect(frame).not.toContain("Error: Tracker unavailable");
-			expect(failed).toContain("Error:");
-			expect(failed?.indexOf("━━━━━━━━━━")).toBe(
-				header?.indexOf("Progress"),
+			expect(errored).toContain("Erro");
+			expect(header).not.toContain("Progress");
+			expect(header).not.toContain("Ratio");
+			expect(header).not.toContain("Peers");
+			const fallbackIndex = lines.findIndex((line) =>
+				line.includes("Failed without message"),
 			);
-			const fallbackLine = frame
-				.split("\n")
-				.find((line) => line.includes("Failed without message"));
+			const fallbackLine = lines[fallbackIndex];
 			expect(fallbackLine).toContain("Error");
 			expect(fallbackLine).not.toContain("Error:");
 		} finally {
@@ -137,11 +164,11 @@ describe("TorrentList", () => {
 					torrent({ hash_string: "hash-3", name: "Seed", status: 5 }),
 				]}
 			/>,
-			{ width: 120, height: 8 },
+			{ width: 120, height: 11 },
 		);
 
 		try {
-			await setup.renderOnce();
+			await renderFrame(setup);
 			const frame = setup.captureCharFrame();
 			const queuedLines = frame
 				.split("\n")
@@ -154,14 +181,14 @@ describe("TorrentList", () => {
 		}
 	});
 
-	test("uses compact columns below the width threshold", async () => {
+	test("uses stable responsive columns", async () => {
 		const setup = await testRender(<TorrentList torrents={[torrent()]} />, {
-			width: 99,
-			height: 3,
+			width: 79,
+			height: 5,
 		});
 
 		try {
-			await setup.renderOnce();
+			await renderFrame(setup);
 			const frame = setup.captureCharFrame();
 			const header = frame
 				.split("\n")
@@ -170,13 +197,71 @@ describe("TorrentList", () => {
 			expect(frame).toContain("52%");
 			expect(header).toContain("Name");
 			expect(header).toContain("Status");
-			expect(header).toContain("Progress");
 			expect(header).not.toContain("Download");
 			expect(header).not.toContain("Upload");
-			expect(frame).not.toContain("━━━━");
-			expect(frame).not.toContain("MiB/s");
-			expect(frame).not.toContain("↓");
-			expect(frame).not.toContain("↑");
+			expect(header).not.toContain("Progress");
+			expect(frame).toContain("━━━ 52% ━━━━");
+			expect(frame).toContain("52%");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("hides lower-priority columns at narrow widths", async () => {
+		const setup = await testRender(<TorrentList torrents={[torrent()]} />, {
+			width: 38,
+			height: 5,
+		});
+
+		try {
+			await renderFrame(setup);
+			const frame = setup.captureCharFrame();
+			expect(frame).not.toContain("Status");
+			expect(frame).toContain("━━━ 52% ━━━━");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("truncates long torrent names at the end", async () => {
+		const setup = await testRender(
+			<TorrentList
+				torrents={[
+					torrent({
+						name: "Prefix torrent name with a suffix that must not survive",
+					}),
+				]}
+			/>,
+			{ width: 120, height: 4 },
+		);
+
+		try {
+			await renderFrame(setup);
+			const frame = setup.captureCharFrame();
+			const row = frame
+				.split("\n")
+				.find((line) => line.includes("Prefix torrent name"));
+
+			expect(row).toContain("Prefix torrent name");
+			expect(row).toContain("…");
+			expect(row).not.toContain("suffix that must not survive");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("uses percentage-only output at very narrow widths", async () => {
+		const setup = await testRender(<TorrentList torrents={[torrent()]} />, {
+			width: 8,
+			height: 6,
+		});
+
+		try {
+			await renderFrame(setup);
+			const frame = setup.captureCharFrame();
+			expect(frame).not.toContain("Status");
+			expect(frame).toContain("52%");
+			expect(frame).not.toContain("━━━━━━━━");
 		} finally {
 			act(() => setup.renderer.destroy());
 		}
@@ -191,11 +276,11 @@ describe("TorrentList", () => {
 				]}
 				selectedHash="hash-2"
 			/>,
-			{ width: 120, height: 6 },
+			{ width: 120, height: 8 },
 		);
 
 		try {
-			await setup.renderOnce();
+			await renderFrame(setup);
 			const selectedLine = setup
 				.captureCharFrame()
 				.split("\n")
@@ -232,8 +317,33 @@ describe("TorrentList", () => {
 		});
 
 		try {
-			await setup.renderOnce();
+			await renderFrame(setup);
 			expect(setup.captureCharFrame()).toContain("No torrents");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("keeps the full column layout when the list is empty", async () => {
+		const setup = await testRender(<TorrentList torrents={[]} />, {
+			width: 120,
+			height: 4,
+		});
+
+		try {
+			await renderFrame(setup);
+			const header = setup
+				.captureCharFrame()
+				.split("\n")
+				.find((line) => line.includes("Name"));
+
+			expect(header).toContain("Status");
+			expect(header).toContain("ETA");
+			expect(header).toContain("Size");
+			expect(header).toContain("Download");
+			expect(header).toContain("Upload");
+			expect(header).not.toContain("Ratio");
+			expect(header).not.toContain("Peers");
 		} finally {
 			act(() => setup.renderer.destroy());
 		}
