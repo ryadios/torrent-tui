@@ -42,6 +42,8 @@ function torrent(hash: string, name: string): TorrentSummary {
 		rate_upload: 0,
 		eta: 0,
 		total_size: 1,
+		upload_ratio: 0,
+		peers_connected: 0,
 		is_finished: false,
 		error: 0,
 		error_string: "",
@@ -140,6 +142,9 @@ describe("App", () => {
 			expect(
 				dialogTitle?.bg.equals(RGBA.fromHex(theme.backgroundPanel)),
 			).toBe(true);
+			expect(dialogTitle?.fg.equals(RGBA.fromHex(theme.primary))).toBe(
+				true,
+			);
 		} finally {
 			act(() => setup.renderer.destroy());
 		}
@@ -953,9 +958,11 @@ describe("App", () => {
 				});
 				await retry.promise;
 			});
-			await setup.renderOnce();
+			await act(async () => {
+				await setup.renderOnce();
+			});
 
-			expect(setup.captureCharFrame()).toContain("Recovered torrent");
+			expect(setup.captureCharFrame()).toContain("Recovered");
 		} finally {
 			act(() => setup.renderer.destroy());
 			interval.restore();
@@ -1027,7 +1034,7 @@ describe("App", () => {
 				operations={withListRequest(() => request.promise)}
 				onQuit={() => {}}
 			/>,
-			{ width: 100, height: 8 },
+			{ width: 100, height: 14 },
 		);
 
 		try {
