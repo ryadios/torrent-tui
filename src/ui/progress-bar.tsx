@@ -4,6 +4,7 @@ import { theme } from "./theme";
 type ProgressBarProps = {
 	percentDone: number;
 	width: number;
+	completedColor?: string;
 };
 
 function clampPercent(percentDone: number): number {
@@ -11,7 +12,11 @@ function clampPercent(percentDone: number): number {
 	return Math.min(1, Math.max(0, percentDone));
 }
 
-export function ProgressBar({ percentDone, width }: ProgressBarProps) {
+export function ProgressBar({
+	percentDone,
+	width,
+	completedColor = theme.primary,
+}: ProgressBarProps) {
 	const progress = clampPercent(percentDone);
 	const percentage = Math.round(progress * 100);
 	const label = ` ${percentage}% `;
@@ -40,7 +45,7 @@ export function ProgressBar({ percentDone, width }: ProgressBarProps) {
 
 	return (
 		<text
-			content={t`${fg(theme.primary)(leftCompleted)}${fg(theme.borderSubtle)(leftRemaining)}${fg(theme.text)(label)}${fg(theme.primary)(rightCompleted)}${fg(theme.borderSubtle)(rightRemaining)}`}
+			content={t`${fg(completedColor)(leftCompleted)}${fg(theme.borderSubtle)(leftRemaining)}${fg(theme.text)(label)}${fg(completedColor)(rightCompleted)}${fg(theme.borderSubtle)(rightRemaining)}`}
 			height={1}
 			selectable={false}
 			wrapMode="none"

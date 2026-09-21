@@ -7,14 +7,14 @@ import { FullBorder } from "./borders";
 import { ProgressBar } from "./progress-bar";
 import { theme } from "./theme";
 
-const MIN_NAME_WIDTH = 24;
+const MIN_NAME_WIDTH = 36;
 const STATUS_WIDTH = 12;
 const ETA_WIDTH = 9;
 const SIZE_WIDTH = 11;
-const RATE_WIDTH = 13;
+const RATE_WIDTH = 24;
 const COLUMN_GAP = 2;
 const NAME_CONTENT_GAP = 1;
-const INLINE_PROGRESS_WIDTH = 12;
+const INLINE_PROGRESS_WIDTH = 30;
 const CONTENT_PADDING = 3;
 
 type TorrentListProps = {
@@ -40,14 +40,36 @@ const statuses: Record<number, string> = {
 	6: "Seeding",
 };
 
-function formatStatus(torrent: TorrentSummary): string {
+type TorrentStatus = {
+	label: string;
+	color: string;
+};
+
+function getTorrentStatus(torrent: TorrentSummary): TorrentStatus {
 	if (torrent.error !== 0) {
-		return torrent.error_string
-			? `Error: ${torrent.error_string}`
-			: "Error";
+		return {
+			label: torrent.error_string
+				? `Error: ${torrent.error_string}`
+				: "Error",
+			color: theme.error,
+		};
 	}
 
-	return statuses[torrent.status] ?? `Status ${torrent.status}`;
+	const label = statuses[torrent.status] ?? `Status ${torrent.status}`;
+
+	switch (torrent.status) {
+		case 1:
+		case 2:
+		case 3:
+		case 5:
+			return { label, color: theme.warning };
+		case 4:
+			return { label, color: theme.primary };
+		case 6:
+			return { label, color: theme.success };
+		default:
+			return { label, color: theme.textMuted };
+	}
 }
 
 function formatRate(bytesPerSecond: number): string {
@@ -127,8 +149,8 @@ function getTorrentLayout(width: number): TorrentLayout {
 
 	const showStatus = addColumns(STATUS_WIDTH);
 	const showEta = showStatus && addColumns(ETA_WIDTH);
-	const showRates = showEta && addColumns(RATE_WIDTH * 2, 2);
-	const showSize = showRates && addColumns(SIZE_WIDTH);
+	const showSize = showEta && addColumns(SIZE_WIDTH);
+	const showRates = showSize && addColumns(RATE_WIDTH);
 
 	return {
 		nameWidth: Math.max(
@@ -161,7 +183,15 @@ function truncateTorrentName(name: string, maxWidth: number): string {
 	return `${result}…`;
 }
 
-function TorrentCell({ children, width }: { children: string; width: number }) {
+function TorrentCell({
+	children,
+	width,
+	color = theme.textMuted,
+}: {
+	children: string;
+	width: number;
+	color?: string;
+}) {
 	return (
 		<box
 			style={{
@@ -171,12 +201,7 @@ function TorrentCell({ children, width }: { children: string; width: number }) {
 				height: 1,
 			}}
 		>
-			<text
-				fg={theme.textMuted}
-				selectable={false}
-				wrapMode="none"
-				truncate
-			>
+			<text fg={color} selectable={false} wrapMode="none" truncate>
 				{children}
 			</text>
 		</box>
@@ -192,6 +217,7 @@ function TorrentRow({
 	layout: TorrentLayout;
 	selected: boolean;
 }) {
+	const status = getTorrentStatus(torrent);
 	const progressWidth = Math.min(
 		INLINE_PROGRESS_WIDTH,
 		Math.max(0, layout.nameWidth - NAME_CONTENT_GAP),
@@ -242,12 +268,13 @@ function TorrentRow({
 					<ProgressBar
 						width={progressWidth}
 						percentDone={torrent.percent_done}
+						completedColor={status.color}
 					/>
 				) : null}
 			</box>
 			{layout.showStatus ? (
-				<TorrentCell width={STATUS_WIDTH}>
-					{formatStatus(torrent)}
+				<TorrentCell width={STATUS_WIDTH} color={status.color}>
+					{status.label}
 				</TorrentCell>
 			) : null}
 			{layout.showEta ? (
@@ -261,14 +288,9 @@ function TorrentRow({
 				</TorrentCell>
 			) : null}
 			{layout.showRates ? (
-				<>
-					<TorrentCell width={RATE_WIDTH}>
-						{`↓ ${formatRate(torrent.rate_download)}`}
-					</TorrentCell>
-					<TorrentCell width={RATE_WIDTH}>
-						{`↑ ${formatRate(torrent.rate_upload)}`}
-					</TorrentCell>
-				</>
+				<TorrentCell width={RATE_WIDTH}>
+					{`↓ ${formatRate(torrent.rate_download)} ↑ ${formatRate(torrent.rate_upload)}`}
+				</TorrentCell>
 			) : null}
 		</box>
 	);
@@ -329,24 +351,14 @@ function TorrentListHeader({ layout }: { layout: TorrentLayout }) {
 				</text>
 			) : null}
 			{layout.showRates ? (
-				<>
-					<text
-						fg={theme.textMuted}
-						selectable={false}
-						wrapMode="none"
-						style={{ width: RATE_WIDTH, flexShrink: 0 }}
-					>
-						Download
-					</text>
-					<text
-						fg={theme.textMuted}
-						selectable={false}
-						wrapMode="none"
-						style={{ width: RATE_WIDTH, flexShrink: 0 }}
-					>
-						Upload
-					</text>
-				</>
+				<text
+					fg={theme.textMuted}
+					selectable={false}
+					wrapMode="none"
+					style={{ width: RATE_WIDTH, flexShrink: 0 }}
+				>
+					Rate
+				</text>
 			) : null}
 		</box>
 	);

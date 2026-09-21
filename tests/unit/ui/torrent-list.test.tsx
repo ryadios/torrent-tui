@@ -67,8 +67,9 @@ describe("TorrentList", () => {
 			expect(header).toContain("Status");
 			expect(header).toContain("ETA");
 			expect(header).toContain("Size");
-			expect(header).toContain("Download");
-			expect(header).toContain("Upload");
+			expect(header).toContain("Rate");
+			expect(header).not.toContain("Download");
+			expect(header).not.toContain("Upload");
 			expect(header).not.toContain("Progress");
 			expect(header).not.toContain("Ratio");
 			expect(header).not.toContain("Peers");
@@ -80,10 +81,10 @@ describe("TorrentList", () => {
 			);
 			expect(first?.indexOf("3 min")).toBe(header?.indexOf("ETA"));
 			expect(first?.indexOf("1.5 MiB")).toBe(header?.indexOf("Size"));
-			expect(first?.indexOf("↓")).toBe(header?.indexOf("Download"));
-			expect(first?.indexOf("↑")).toBe(header?.indexOf("Upload"));
+			expect(first?.indexOf("↓")).toBe(header?.indexOf("Rate"));
+			expect(first).toContain("↓ 1.5 MiB/s ↑ 256 B/s");
 			expect(second?.indexOf("Seeding")).toBe(header?.indexOf("Status"));
-			expect(first).toContain("━━━ 52% ━━━━");
+			expect(first).toContain("52%");
 			expect(frame).toContain("Downloading");
 			expect(frame).toContain("Seeding");
 			expect(frame).toContain("1.5 MiB/s");
@@ -197,10 +198,11 @@ describe("TorrentList", () => {
 			expect(frame).toContain("52%");
 			expect(header).toContain("Name");
 			expect(header).toContain("Status");
+			expect(header).toContain("Size");
+			expect(header).not.toContain("Rate");
 			expect(header).not.toContain("Download");
 			expect(header).not.toContain("Upload");
 			expect(header).not.toContain("Progress");
-			expect(frame).toContain("━━━ 52% ━━━━");
 			expect(frame).toContain("52%");
 		} finally {
 			act(() => setup.renderer.destroy());
@@ -340,8 +342,9 @@ describe("TorrentList", () => {
 			expect(header).toContain("Status");
 			expect(header).toContain("ETA");
 			expect(header).toContain("Size");
-			expect(header).toContain("Download");
-			expect(header).toContain("Upload");
+			expect(header).toContain("Rate");
+			expect(header).not.toContain("Download");
+			expect(header).not.toContain("Upload");
 			expect(header).not.toContain("Ratio");
 			expect(header).not.toContain("Peers");
 		} finally {
