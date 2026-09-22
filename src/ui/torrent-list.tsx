@@ -89,7 +89,7 @@ function formatRate(bytesPerSecond: number): string {
 }
 
 function formatEta(eta: number): string {
-	if (!Number.isFinite(eta) || eta < 0) return "Unknown";
+	if (!Number.isFinite(eta) || eta < 0) return "—";
 
 	const seconds = Math.floor(eta);
 	if (seconds < 60) return `${seconds} sec`;

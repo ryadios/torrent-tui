@@ -100,7 +100,7 @@ describe("TorrentList", () => {
 				torrents={[
 					torrent({
 						status: 99,
-						name: "Unknown",
+						name: "Unrecognized",
 						eta: -1,
 						total_size: 0,
 						upload_ratio: -1,
@@ -128,9 +128,12 @@ describe("TorrentList", () => {
 			const lines = frame.split("\n");
 			const header = lines.find((line) => line.includes("Name"));
 			const errored = lines.find((line) => line.includes("Erro"));
+			const unknownStatus = lines.find((line) =>
+				line.includes("Status 99"),
+			);
 
 			expect(frame).toContain("Status 99");
-			expect(frame).toContain("Unknown");
+			expect(unknownStatus).toContain("—");
 			expect(frame).toContain("0 B");
 			expect(frame).not.toContain("Error: Tracker unavailable");
 			expect(errored).toContain("Erro");
