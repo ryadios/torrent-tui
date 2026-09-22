@@ -67,7 +67,8 @@ export async function addTorrent(
 export async function removeTorrent(
 	client: TorrentOperations,
 	torrentHash: string,
+	deleteLocalData = false,
 ): Promise<RefreshOutcome> {
-	await client.removeTorrent(torrentHash);
+	await client.removeTorrent(torrentHash, deleteLocalData);
 	return refreshTorrents(client);
 }

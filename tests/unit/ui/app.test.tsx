@@ -446,7 +446,7 @@ describe("App", () => {
 		const refresh = Promise.withResolvers<TorrentList>();
 		const refreshStarted = Promise.withResolvers<void>();
 		let listCalls = 0;
-		const removedHashes: string[] = [];
+		const removals: [string, boolean | undefined][] = [];
 		let quitCalls = 0;
 		const setup = await testRender(
 			<App
@@ -458,8 +458,8 @@ describe("App", () => {
 						refreshStarted.resolve();
 						return refresh.promise;
 					},
-					removeTorrent: (hash) => {
-						removedHashes.push(hash);
+					removeTorrent: (hash, deleteLocalData) => {
+						removals.push([hash, deleteLocalData]);
 						return mutation.promise;
 					},
 				}}
@@ -491,8 +491,8 @@ describe("App", () => {
 			let frame = setup.captureCharFrame();
 			expect(frame).toContain("Remove torrent");
 			expect(frame).toContain("Second torrent");
-			expect(frame).toContain("Local data will be kept.");
 			expect(frame).toContain("Enter remove");
+			expect(frame).toContain("Shift+Enter delete data");
 			expect(frame).toContain("Esc cancel");
 
 			act(() => {
@@ -502,7 +502,7 @@ describe("App", () => {
 			await setup.renderOnce();
 			expect(quitCalls).toBe(0);
 			expect(listCalls).toBe(1);
-			expect(removedHashes).toEqual(["hash-2"]);
+			expect(removals).toEqual([["hash-2", false]]);
 			expect(setup.captureCharFrame()).toContain("Removing...");
 			expect(setup.captureCharFrame()).not.toContain("Enter remove");
 			expect(setup.captureCharFrame()).not.toContain("Esc cancel");
@@ -512,7 +512,7 @@ describe("App", () => {
 				setup.mockInput.pressEscape();
 			});
 			await setup.renderOnce();
-			expect(removedHashes).toEqual(["hash-2"]);
+			expect(removals).toEqual([["hash-2", false]]);
 
 			await act(async () => {
 				mutation.resolve();
@@ -530,6 +530,52 @@ describe("App", () => {
 			frame = setup.captureCharFrame();
 			expect(frame).not.toContain("Remove torrent");
 			expect(frame).toContain("First torrent");
+		} finally {
+			act(() => setup.renderer.destroy());
+		}
+	});
+
+	test("Shift+Enter removes the selected torrent and its data once", async () => {
+		const request = Promise.withResolvers<TorrentList>();
+		const mutation = Promise.withResolvers<void>();
+		const removals: [string, boolean | undefined][] = [];
+		const setup = await testRender(
+			<App
+				operations={{
+					...withListRequest(() => request.promise),
+					removeTorrent: (hash, deleteLocalData) => {
+						removals.push([hash, deleteLocalData]);
+						return mutation.promise;
+					},
+				}}
+				onQuit={() => {}}
+			/>,
+			{ width: 100, height: 10, kittyKeyboard: true },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				request.resolve({
+					torrents: [torrent("hash-1", "Existing torrent")],
+				});
+				await request.promise;
+			});
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressKey("d"));
+			await setup.renderOnce();
+			act(() => setup.mockInput.pressEnter({ shift: true }));
+			await setup.renderOnce();
+			expect(removals).toEqual([["hash-1", true]]);
+
+			act(() => {
+				setup.mockInput.pressEnter({ shift: true });
+				setup.mockInput.pressEnter();
+				setup.mockInput.pressEscape();
+			});
+			await setup.renderOnce();
+			expect(removals).toEqual([["hash-1", true]]);
+			expect(setup.captureCharFrame()).toContain("Removing...");
 		} finally {
 			act(() => setup.renderer.destroy());
 		}

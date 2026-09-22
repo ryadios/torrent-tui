@@ -224,6 +224,17 @@ describe("TransmissionClient operations", () => {
 			delete_local_data: false,
 		});
 	});
+
+	test("removes a torrent and deletes local data when requested", async () => {
+		const requests = stubFetch([jsonResponse({ result: {} })]);
+
+		await new TransmissionClient().removeTorrent("abc123", true);
+
+		expectRpcRequest(requestAt(requests, 0), "torrent_remove", {
+			ids: ["abc123"],
+			delete_local_data: true,
+		});
+	});
 });
 
 describe("TransmissionClient session negotiation", () => {

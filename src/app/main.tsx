@@ -5,7 +5,9 @@ import { App } from "../ui/app";
 import { theme } from "../ui/theme";
 
 export async function runApp(): Promise<void> {
-	const renderer = await createCliRenderer();
+	const renderer = await createCliRenderer({
+		useKittyKeyboard: { allKeysAsEscapes: true },
+	});
 	renderer.setBackgroundColor(theme.background);
 	const client = new TransmissionClient();
 

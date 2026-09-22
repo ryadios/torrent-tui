@@ -140,8 +140,8 @@ describe("torrent actions", () => {
 	test("removes a torrent before returning the latest list", async () => {
 		const calls: string[] = [];
 		const client = makeClient({
-			removeTorrent: async (torrentHash) => {
-				calls.push(`remove:${torrentHash}`);
+			removeTorrent: async (torrentHash, deleteLocalData) => {
+				calls.push(`remove:${torrentHash}:${deleteLocalData}`);
 			},
 			listTorrents: async () => {
 				calls.push("list");
@@ -149,9 +149,9 @@ describe("torrent actions", () => {
 			},
 		});
 
-		const result = await removeTorrent(client, "abc123");
+		const result = await removeTorrent(client, "abc123", true);
 
-		expect(calls).toEqual(["remove:abc123", "list"]);
+		expect(calls).toEqual(["remove:abc123:true", "list"]);
 		expect(result).toEqual({
 			status: "refreshed",
 			torrents: torrentList,

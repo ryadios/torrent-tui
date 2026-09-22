@@ -166,10 +166,13 @@ export class TransmissionClient {
 		});
 	}
 
-	async removeTorrent(torrentHash: string): Promise<void> {
+	async removeTorrent(
+		torrentHash: string,
+		deleteLocalData = false,
+	): Promise<void> {
 		await this.rpcCall("torrent_remove", {
 			ids: [torrentHash],
-			delete_local_data: false, // default
+			delete_local_data: deleteLocalData,
 		});
 	}
 }

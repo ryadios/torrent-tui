@@ -233,7 +233,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		setRemove({ open: false });
 	}
 
-	async function submitRemove(): Promise<void> {
+	async function submitRemove(deleteLocalData: boolean): Promise<void> {
 		if (!remove.open || remove.pending || busy.current) return;
 
 		const torrentHash = remove.hash;
@@ -251,7 +251,11 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 		);
 
 		try {
-			const outcome = await removeTorrent(operations, torrentHash);
+			const outcome = await removeTorrent(
+				operations,
+				torrentHash,
+				deleteLocalData,
+			);
 			if (!mounted.current) return;
 
 			const nextTorrents =
@@ -512,8 +516,8 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 				<RemoveDialog
 					name={remove.name}
 					pending={remove.pending}
-					onConfirm={() => {
-						void submitRemove();
+					onConfirm={(deleteLocalData) => {
+						void submitRemove(deleteLocalData);
 					}}
 					onClose={closeRemove}
 				/>
