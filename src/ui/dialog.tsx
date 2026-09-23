@@ -22,7 +22,7 @@ type DialogHintsProps = {
 
 function Hint({ hint }: { hint: DialogHint }) {
 	return (
-		<box flexDirection="row">
+		<box flexDirection="row" flexShrink={0}>
 			<text fg={theme.primary} selectable={false}>
 				{hint.key}
 			</text>
@@ -35,8 +35,13 @@ function Hint({ hint }: { hint: DialogHint }) {
 
 export function DialogHints({ left, right }: DialogHintsProps) {
 	return (
-		<box flexDirection="row" flexShrink={0} justifyContent="space-between">
-			<box flexDirection="row" columnGap={2}>
+		<box
+			flexDirection="row"
+			flexWrap="wrap"
+			flexShrink={0}
+			justifyContent="space-between"
+		>
+			<box flexDirection="row" flexWrap="wrap" columnGap={2}>
 				{left.map((hint) => (
 					<Hint key={`${hint.key}-${hint.label}`} hint={hint} />
 				))}
