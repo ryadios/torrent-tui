@@ -13,10 +13,10 @@ function torrent(overrides: Partial<TorrentSummary> = {}): TorrentSummary {
 		name: "Example torrent",
 		status: 4,
 		percent_done: 0.52,
-		rate_download: 1_572_864,
+		rate_download: 1_500_000,
 		rate_upload: 256,
 		eta: 180,
-		total_size: 1_572_864,
+		total_size: 1_500_000,
 		upload_ratio: 0.5,
 		peers_connected: 4,
 		is_finished: false,
@@ -80,14 +80,14 @@ describe("TorrentList", () => {
 				header?.indexOf("Status"),
 			);
 			expect(first?.indexOf("3 min")).toBe(header?.indexOf("ETA"));
-			expect(first?.indexOf("1.5 MiB")).toBe(header?.indexOf("Size"));
+			expect(first?.indexOf("1.5 MB")).toBe(header?.indexOf("Size"));
 			expect(first?.indexOf("↓")).toBe(header?.indexOf("Rate"));
-			expect(first).toContain("↓ 1.5 MiB/s ↑ 256 B/s");
+			expect(first).toContain("↓ 1.5 MB/s ↑ 256 B/s");
 			expect(second?.indexOf("Seeding")).toBe(header?.indexOf("Status"));
 			expect(first).toContain("52%");
 			expect(frame).toContain("Downloading");
 			expect(frame).toContain("Seeding");
-			expect(frame).toContain("1.5 MiB/s");
+			expect(frame).toContain("1.5 MB/s");
 			expect(frame).toContain("256 B/s");
 		} finally {
 			act(() => setup.renderer.destroy());

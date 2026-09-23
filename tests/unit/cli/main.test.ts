@@ -57,7 +57,7 @@ function torrent(
 		name,
 		status,
 		percent_done: 0.5,
-		rate_download: 1024,
+		rate_download: 1500,
 		rate_upload: 0,
 		eta: 0,
 		total_size: 1,
@@ -91,7 +91,7 @@ describe("CLI", () => {
 		expect(captured.stdout[1]).toContain(hash);
 		expect(captured.stdout[1]).toContain("Downloading");
 		expect(captured.stdout[1]).toContain("50%");
-		expect(captured.stdout[1]).toContain("↓ 1.0 KiB/s");
+		expect(captured.stdout[1]).toContain("↓ 1.5 KB/s");
 		expect(captured.stdout[1]).toContain("↑ 0 B/s");
 	});
 

@@ -47,14 +47,14 @@ function formatStatus(torrent: TorrentSummary): string {
 
 function formatRate(bytesPerSecond: number): string {
 	const rate = Math.max(0, bytesPerSecond);
-	const units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
+	const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
 	let value = rate;
 	let unitIndex = 0;
 
-	if (value < 1024) return `${Math.round(value)} B/s`;
+	if (value < 1000) return `${Math.round(value)} B/s`;
 
-	while (value >= 1024 && unitIndex < units.length - 1) {
-		value /= 1024;
+	while (value >= 1000 && unitIndex < units.length - 1) {
+		value /= 1000;
 		unitIndex += 1;
 	}
 
