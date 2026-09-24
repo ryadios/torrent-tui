@@ -48,7 +48,7 @@ src/
     ├── header.tsx                    # Render the application header
     ├── keybinds.ts                   # Define shell key hints
     ├── progress-bar.tsx              # Render compact torrent progress
-    ├── remove-dialog.tsx             # Confirm removal while keeping local data
+    ├── remove-dialog.tsx             # Confirm removal with optional data deletion
     ├── theme.ts                      # Define Tokyo Night theme values
     ├── torrent-browser.tsx           # Browse readable directories and torrent files
     ├── torrent-list.tsx              # Render the torrent list and rows
@@ -78,5 +78,6 @@ tests/
 - Await real asynchronous operations; do not use arbitrary delays to make asynchronous tests pass.
 - Use temporary directories for future filesystem tests rather than writing test data into the repository.
 - Keep OpenTUI renderer tests separate from backend tests and release renderer resources after each test.
-- Add or update a focused test when observable behavior changes.
+- Before adding a new test case, explain the regression it protects, why existing coverage is insufficient, and get user approval.
+- Update existing tests for changed behavior without adding redundant cases.
 - Do not add another test framework or coverage policy until the project has a concrete need for it.
