@@ -15,6 +15,10 @@ export const keybinds = {
 		key: "d",
 		label: "remove",
 	},
+	search: {
+		key: "/",
+		label: "search",
+	},
 	quit: {
 		key: "q",
 		label: "quit",
