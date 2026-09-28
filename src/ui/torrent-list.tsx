@@ -20,6 +20,7 @@ const CONTENT_PADDING = 3;
 type TorrentListProps = {
 	torrents: TorrentSummary[];
 	selectedHash?: string;
+	emptyMessage?: string;
 };
 
 type TorrentLayout = {
@@ -364,7 +365,11 @@ function TorrentListHeader({ layout }: { layout: TorrentLayout }) {
 	);
 }
 
-export function TorrentList({ torrents, selectedHash }: TorrentListProps) {
+export function TorrentList({
+	torrents,
+	selectedHash,
+	emptyMessage = "No torrents",
+}: TorrentListProps) {
 	const { width: terminalWidth } = useTerminalDimensions();
 	const [listWidth, setListWidth] = useState(0);
 	const listRef = useRef<BoxRenderable | null>(null);
@@ -409,7 +414,7 @@ export function TorrentList({ torrents, selectedHash }: TorrentListProps) {
 						justifyContent="center"
 					>
 						<text fg={theme.textMuted} selectable={false}>
-							No torrents
+							{emptyMessage}
 						</text>
 					</box>
 				) : (

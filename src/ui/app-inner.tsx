@@ -19,7 +19,7 @@ import { useTorrentPolling } from "./use-torrent-polling";
 
 type AppInnerProps = {
 	operations: TorrentOperations;
-	onModalActiveChange: (active: boolean) => void;
+	onQuitBlockedChange: (blocked: boolean) => void;
 };
 
 type Activity =
@@ -50,16 +50,38 @@ type RemoveState =
 			pending: boolean;
 	  };
 
+const SEARCH_DELAY_MS = 150;
+
+function filterByName(
+	torrents: TorrentSummary[],
+	query: string,
+): TorrentSummary[] {
+	const needle = query.trim().toLocaleLowerCase();
+	return needle
+		? torrents.filter((torrent) =>
+				torrent.name.toLocaleLowerCase().includes(needle),
+			)
+		: torrents;
+}
+
+function pickHash(
+	torrents: TorrentSummary[],
+	selectedHash?: string,
+): string | undefined {
+	return torrents.some((torrent) => torrent.hash_string === selectedHash)
+		? selectedHash
+		: torrents[0]?.hash_string;
+}
+
 function withTorrents(
 	current: ListState,
 	torrents: TorrentSummary[],
+	query: string,
 ): ListState {
-	const selectedHash =
-		current.status === "loaded" &&
-		current.selectedHash &&
-		torrents.some((torrent) => torrent.hash_string === current.selectedHash)
-			? current.selectedHash
-			: torrents[0]?.hash_string;
+	const selectedHash = pickHash(
+		filterByName(torrents, query),
+		current.status === "loaded" ? current.selectedHash : undefined,
+	);
 
 	return {
 		status: "loaded",
@@ -69,14 +91,26 @@ function withTorrents(
 	};
 }
 
-export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
+export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 	const [list, setList] = useState<ListState>({ status: "loading" });
 	const [add, setAdd] = useState<AddState>({ open: false });
 	const [remove, setRemove] = useState<RemoveState>({ open: false });
+	const [draft, setDraft] = useState("");
+	const [query, setQuery] = useState("");
+	const [searchEditing, setSearchEditing] = useState(false);
 	const busy = useRef(false);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
 	const pollWarningShown = useRef(false);
+	const draftRef = useRef("");
+	const queryRef = useRef("");
+	const searchEditingRef = useRef(false);
+	const visibleTorrents =
+		list.status === "loaded" ? filterByName(list.torrents, query) : [];
+	const visibleSelectedHash = pickHash(
+		visibleTorrents,
+		list.status === "loaded" ? list.selectedHash : undefined,
+	);
 
 	const showMessage = (
 		message: string,
@@ -96,8 +130,30 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 
 	const applyTorrents = useCallback((torrents: TorrentSummary[]): void => {
 		pollWarningShown.current = false;
-		setList((current) => withTorrents(current, torrents));
+		setList((current) => withTorrents(current, torrents, queryRef.current));
 	}, []);
+
+	const applySearch = useCallback((value: string): void => {
+		const nextQuery = value.trim();
+		queryRef.current = nextQuery;
+		setQuery(nextQuery);
+		setList((current) => {
+			if (current.status !== "loaded") return current;
+			const nextSelectedHash = pickHash(
+				filterByName(current.torrents, nextQuery),
+				current.selectedHash,
+			);
+			return current.selectedHash === nextSelectedHash
+				? current
+				: { ...current, selectedHash: nextSelectedHash };
+		});
+	}, []);
+
+	useEffect(() => {
+		if (!searchEditing || draft.trim() === query) return;
+		const timer = setTimeout(() => applySearch(draft), SEARCH_DELAY_MS);
+		return () => clearTimeout(timer);
+	}, [applySearch, searchEditing, draft, query]);
 
 	useEffect(() => {
 		let active = true;
@@ -129,9 +185,37 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 
 		return () => {
 			mounted.current = false;
-			onModalActiveChange(false);
+			onQuitBlockedChange(false);
 		};
-	}, [onModalActiveChange]);
+	}, [onQuitBlockedChange]);
+
+	function currentHash(): string | undefined {
+		if (list.status !== "loaded") return undefined;
+		return pickHash(
+			filterByName(list.torrents, queryRef.current),
+			selectedHash.current,
+		);
+	}
+
+	function openSearch(): void {
+		if (list.status !== "loaded" || searchEditingRef.current) return;
+		searchEditingRef.current = true;
+		onQuitBlockedChange(true);
+		setSearchEditing(true);
+	}
+
+	function finishSearch(apply: boolean): void {
+		searchEditingRef.current = false;
+		onQuitBlockedChange(false);
+		setSearchEditing(false);
+		if (apply) {
+			applySearch(draftRef.current);
+		} else {
+			draftRef.current = "";
+			setDraft("");
+			applySearch("");
+		}
+	}
 
 	async function refresh(): Promise<void> {
 		if (list.status === "loading" || busy.current) return;
@@ -164,13 +248,13 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 
 	function openAdd(): void {
 		if (list.status === "loading" || busy.current || add.open) return;
-		onModalActiveChange(true);
+		onQuitBlockedChange(true);
 		setAdd({ open: true, pending: false });
 	}
 
 	function closeAdd(): void {
 		if (!add.open || add.pending) return;
-		onModalActiveChange(false);
+		onQuitBlockedChange(false);
 		setAdd({ open: false });
 	}
 
@@ -194,7 +278,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 			} else {
 				showMessage("Refresh failed", "warning");
 			}
-			onModalActiveChange(false);
+			onQuitBlockedChange(false);
 			setAdd({ open: false });
 		} catch {
 			if (mounted.current) {
@@ -212,13 +296,13 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	function openRemove(): void {
 		if (list.status !== "loaded" || busy.current || remove.open) return;
 
-		const torrentHash = selectedHash.current;
+		const torrentHash = currentHash();
 		const torrent = list.torrents.find(
 			(candidate) => candidate.hash_string === torrentHash,
 		);
 		if (!torrent) return;
 
-		onModalActiveChange(true);
+		onQuitBlockedChange(true);
 		setRemove({
 			open: true,
 			name: torrent.name,
@@ -229,7 +313,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 
 	function closeRemove(): void {
 		if (!remove.open || remove.pending) return;
-		onModalActiveChange(false);
+		onQuitBlockedChange(false);
 		setRemove({ open: false });
 	}
 
@@ -268,11 +352,11 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 							)
 						: [];
 			applyTorrents(nextTorrents);
-			onModalActiveChange(false);
+			onQuitBlockedChange(false);
 			setRemove({ open: false });
 		} catch {
 			if (!mounted.current) return;
-			onModalActiveChange(false);
+			onQuitBlockedChange(false);
 			setRemove({ open: false });
 			showMessage("Remove failed");
 		} finally {
@@ -281,7 +365,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	}
 
 	async function start(): Promise<void> {
-		const torrentHash = selectedHash.current;
+		const torrentHash = currentHash();
 		if (list.status !== "loaded" || !torrentHash || busy.current) return;
 
 		busy.current = true;
@@ -310,7 +394,7 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	}
 
 	async function stop(): Promise<void> {
-		const torrentHash = selectedHash.current;
+		const torrentHash = currentHash();
 		if (list.status !== "loaded" || !torrentHash || busy.current) return;
 
 		busy.current = true;
@@ -339,27 +423,29 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	}
 
 	function select(target: "next" | "previous" | "first" | "last"): void {
-		if (list.status !== "loaded" || list.torrents.length === 0) return;
+		if (list.status !== "loaded") return;
+		const torrents = filterByName(list.torrents, queryRef.current);
+		if (torrents.length === 0) return;
 
 		const currentIndex = Math.max(
 			0,
-			list.torrents.findIndex(
-				(torrent) => torrent.hash_string === selectedHash.current,
+			torrents.findIndex(
+				(torrent) => torrent.hash_string === currentHash(),
 			),
 		);
 		const nextIndex =
 			target === "first"
 				? 0
 				: target === "last"
-					? list.torrents.length - 1
+					? torrents.length - 1
 					: Math.min(
 							Math.max(
 								currentIndex + (target === "next" ? 1 : -1),
 								0,
 							),
-							list.torrents.length - 1,
+							torrents.length - 1,
 						);
-		const torrentHash = list.torrents[nextIndex]?.hash_string;
+		const torrentHash = torrents[nextIndex]?.hash_string;
 
 		if (torrentHash === selectedHash.current) return;
 		selectedHash.current = torrentHash;
@@ -371,9 +457,30 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 	}
 
 	useKeyboard((key) => {
+		if (searchEditingRef.current) {
+			if (
+				!key.ctrl &&
+				!key.meta &&
+				!key.shift &&
+				(key.name === "return" || key.name === "escape")
+			) {
+				key.preventDefault();
+				key.stopPropagation();
+				finishSearch(key.name === "return");
+			}
+			return;
+		}
 		if (add.open || remove.open) return;
 		// Ignore modified shortcuts.
 		if (key.ctrl || key.meta || key.shift) return;
+		if (key.name === "escape" && queryRef.current) {
+			finishSearch(false);
+			return;
+		}
+		if (key.name === keybinds.search.key) {
+			openSearch();
+			return;
+		}
 		// Ignore held network shortcuts.
 		if (
 			key.repeated &&
@@ -482,16 +589,29 @@ export function AppInner({ operations, onModalActiveChange }: AppInnerProps) {
 						</box>
 					) : (
 						<TorrentList
-							torrents={list.torrents}
-							selectedHash={list.selectedHash}
+							torrents={visibleTorrents}
+							selectedHash={visibleSelectedHash}
+							emptyMessage={query ? "No matches" : "No torrents"}
 						/>
 					)}
 				</Frame>
 			</box>
 			<Footer
 				canAdd={list.status !== "loading"}
-				hasSelection={
-					list.status === "loaded" && list.selectedHash !== undefined
+				hasSelection={visibleSelectedHash !== undefined}
+				search={
+					list.status === "loaded"
+						? {
+								editing: searchEditing,
+								draft,
+								query,
+								onInput: (value) => {
+									draftRef.current = value;
+									setDraft(value);
+									if (!value.trim()) applySearch("");
+								},
+							}
+						: undefined
 				}
 				status={
 					list.status === "loading" ? { kind: "idle" } : list.activity

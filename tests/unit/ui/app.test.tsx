@@ -76,6 +76,124 @@ function interceptInterval() {
 }
 
 describe("App", () => {
+	test("filters torrents by name", async () => {
+		const request = Promise.withResolvers<TorrentList>();
+		const searchTimer = {} as Timer;
+		const timerApi = globalThis as {
+			setTimeout: (
+				handler: Bun.TimerHandler,
+				timeout?: number,
+				...args: unknown[]
+			) => Timer;
+			clearTimeout: (handle?: Timer) => void;
+		};
+		const originalSetTimeout = timerApi.setTimeout;
+		const originalClearTimeout = timerApi.clearTimeout;
+		let runTimer: (() => void) | undefined;
+		let quitCalls = 0;
+		let startCalls = 0;
+		let stopCalls = 0;
+		const setTimeoutSpy = spyOn(timerApi, "setTimeout").mockImplementation(
+			(handler, delay, ...args) => {
+				if (delay === 150) {
+					runTimer = () => {
+						if (typeof handler === "function") handler(...args);
+					};
+					return searchTimer;
+				}
+				return originalSetTimeout(handler, delay, ...args);
+			},
+		);
+		const clearTimeoutSpy = spyOn(
+			timerApi,
+			"clearTimeout",
+		).mockImplementation((handle) => {
+			if (handle === searchTimer) {
+				runTimer = undefined;
+				return;
+			}
+			originalClearTimeout(handle);
+		});
+		const setup = await testRender(
+			<App
+				operations={{
+					...withListRequest(() => request.promise),
+					startTorrent: async () => {
+						startCalls += 1;
+					},
+					stopTorrent: async () => {
+						stopCalls += 1;
+					},
+				}}
+				onQuit={() => {
+					quitCalls += 1;
+				}}
+			/>,
+			{ width: 100, height: 10 },
+		);
+
+		try {
+			await setup.renderOnce();
+			await act(async () => {
+				request.resolve({
+					torrents: [
+						torrent("hash-1", "Other torrent"),
+						torrent("hash-2", "qasd sample"),
+					],
+				});
+				await request.promise;
+			});
+			await setup.renderOnce();
+
+			act(() => setup.mockInput.pressKey("/"));
+			await setup.renderOnce();
+			await act(async () => {
+				await setup.mockInput.typeText("qasd");
+			});
+			await setup.renderOnce();
+			expect(setup.captureCharFrame()).toContain("Other torrent");
+			expect(quitCalls).toBe(0);
+			expect(startCalls).toBe(0);
+			expect(stopCalls).toBe(0);
+			expect(setup.captureCharFrame()).not.toContain("Add torrent");
+			expect(setup.captureCharFrame()).not.toContain("Remove torrent");
+
+			act(() => runTimer?.());
+			await setup.renderOnce();
+			const frame = setup.captureCharFrame();
+			expect(frame).toContain("qasd sample");
+			expect(frame).not.toContain("Other torrent");
+			const selectedLine = setup
+				.captureSpans()
+				.lines.find((line) =>
+					line.spans.some((span) =>
+						span.text.includes("qasd sample"),
+					),
+				);
+			expect(
+				selectedLine?.spans.some(
+					(span) =>
+						span.text.includes("│") &&
+						span.fg.equals(RGBA.fromHex(theme.primary)),
+				),
+			).toBe(true);
+			act(() => setup.mockInput.pressEnter());
+			await setup.renderOnce();
+			expect(setup.captureCharFrame()).not.toContain("Other torrent");
+			await act(async () => {
+				setup.mockInput.pressEscape();
+				// OpenTUI waits 20 ms before treating a lone Esc as a key.
+				await new Promise((resolve) => originalSetTimeout(resolve, 25));
+			});
+			await setup.renderOnce();
+			expect(setup.captureCharFrame()).toContain("Other torrent");
+		} finally {
+			act(() => setup.renderer.destroy());
+			setTimeoutSpy.mockRestore();
+			clearTimeoutSpy.mockRestore();
+		}
+	});
+
 	test("renders the normal shell", async () => {
 		const setup = await testRender(
 			<App operations={operations} onQuit={() => {}} />,

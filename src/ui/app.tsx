@@ -12,15 +12,15 @@ type AppProps = {
 };
 
 export function App({ operations, onQuit }: AppProps) {
-	const modalActive = useRef(false);
-	const handleModalActiveChange = useCallback((active: boolean) => {
-		modalActive.current = active;
+	const quitBlocked = useRef(false);
+	const handleQuitBlockedChange = useCallback((blocked: boolean) => {
+		quitBlocked.current = blocked;
 	}, []);
 
 	useKeyboard((key) => {
 		if (
 			key.name === keybinds.quit.key &&
-			!modalActive.current &&
+			!quitBlocked.current &&
 			!key.ctrl &&
 			!key.meta &&
 			!key.shift
@@ -38,7 +38,7 @@ export function App({ operations, onQuit }: AppProps) {
 			<Header />
 			<AppInner
 				operations={operations}
-				onModalActiveChange={handleModalActiveChange}
+				onQuitBlockedChange={handleQuitBlockedChange}
 			/>
 		</box>
 	);
