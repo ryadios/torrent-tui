@@ -76,7 +76,7 @@ function interceptInterval() {
 }
 
 describe("App", () => {
-	test("searches visible torrents without triggering shortcuts while typing", async () => {
+	test("filters torrents by name", async () => {
 		const request = Promise.withResolvers<TorrentList>();
 		const searchTimer = {} as Timer;
 		const timerApi = globalThis as {
@@ -89,14 +89,14 @@ describe("App", () => {
 		};
 		const originalSetTimeout = timerApi.setTimeout;
 		const originalClearTimeout = timerApi.clearTimeout;
-		let applySearch: (() => void) | undefined;
+		let runTimer: (() => void) | undefined;
 		let quitCalls = 0;
 		let startCalls = 0;
 		let stopCalls = 0;
 		const setTimeoutSpy = spyOn(timerApi, "setTimeout").mockImplementation(
 			(handler, delay, ...args) => {
 				if (delay === 150) {
-					applySearch = () => {
+					runTimer = () => {
 						if (typeof handler === "function") handler(...args);
 					};
 					return searchTimer;
@@ -109,7 +109,7 @@ describe("App", () => {
 			"clearTimeout",
 		).mockImplementation((handle) => {
 			if (handle === searchTimer) {
-				applySearch = undefined;
+				runTimer = undefined;
 				return;
 			}
 			originalClearTimeout(handle);
@@ -158,7 +158,7 @@ describe("App", () => {
 			expect(setup.captureCharFrame()).not.toContain("Add torrent");
 			expect(setup.captureCharFrame()).not.toContain("Remove torrent");
 
-			act(() => applySearch?.());
+			act(() => runTimer?.());
 			await setup.renderOnce();
 			const frame = setup.captureCharFrame();
 			expect(frame).toContain("qasd sample");

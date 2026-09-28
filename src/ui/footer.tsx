@@ -9,7 +9,7 @@ type FooterProps = {
 	hasSelection?: boolean;
 	search?: {
 		editing: boolean;
-		value: string;
+		draft: string;
 		query: string;
 		onInput: (value: string) => void;
 	};
@@ -68,7 +68,7 @@ export function Footer({
 							ref={inputRef}
 							flexGrow={1}
 							minWidth={0}
-							value={search.value}
+							value={search.draft}
 							onInput={search.onInput}
 							placeholder="Search torrents"
 							backgroundColor={theme.background}

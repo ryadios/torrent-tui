@@ -12,15 +12,15 @@ type AppProps = {
 };
 
 export function App({ operations, onQuit }: AppProps) {
-	const shortcutsBlocked = useRef(false);
-	const handleShortcutsBlockedChange = useCallback((blocked: boolean) => {
-		shortcutsBlocked.current = blocked;
+	const quitBlocked = useRef(false);
+	const handleQuitBlockedChange = useCallback((blocked: boolean) => {
+		quitBlocked.current = blocked;
 	}, []);
 
 	useKeyboard((key) => {
 		if (
 			key.name === keybinds.quit.key &&
-			!shortcutsBlocked.current &&
+			!quitBlocked.current &&
 			!key.ctrl &&
 			!key.meta &&
 			!key.shift
@@ -38,7 +38,7 @@ export function App({ operations, onQuit }: AppProps) {
 			<Header />
 			<AppInner
 				operations={operations}
-				onShortcutsBlockedChange={handleShortcutsBlockedChange}
+				onQuitBlockedChange={handleQuitBlockedChange}
 			/>
 		</box>
 	);
