@@ -103,6 +103,16 @@ describe("TransmissionClient operations", () => {
 		});
 	});
 
+	test("gets session-wide transfer rates", async () => {
+		const stats = { download_speed: 1024, upload_speed: 256 };
+		const requests = stubFetch([jsonResponse({ result: stats })]);
+
+		const result = await new TransmissionClient().getSessionStats();
+
+		expect(result).toEqual(stats);
+		expectRpcRequest(requestAt(requests, 0), "session_stats", {});
+	});
+
 	test("lists torrents with the fields needed by the client", async () => {
 		const torrentList = {
 			torrents: [

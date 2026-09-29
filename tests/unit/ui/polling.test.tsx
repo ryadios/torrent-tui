@@ -13,6 +13,7 @@ import { useTorrentPolling } from "../../../src/ui/use-torrent-polling";
 
 const operations: TorrentOperations = {
 	listTorrents: () => new Promise(() => {}),
+	getSessionStats: () => new Promise(() => {}),
 	addTorrent: async () => ({
 		torrent_added: {
 			id: 1,
@@ -108,7 +109,7 @@ describe("useTorrentPolling", () => {
 		}
 	});
 
-	test("schedules a two-second tick, calls it, and cleans it up", async () => {
+	test("schedules a one-second tick, calls it, and cleans it up", async () => {
 		const interval = interceptInterval();
 		const onTick = mock(() => {});
 		const setup = await testRender(
@@ -119,7 +120,7 @@ describe("useTorrentPolling", () => {
 		try {
 			await setup.renderOnce();
 			expect(interval.setIntervalSpy).toHaveBeenCalledTimes(1);
-			expect(interval.delay()).toBe(2_000);
+			expect(interval.delay()).toBe(1_000);
 
 			act(() => interval.tick());
 			expect(onTick).toHaveBeenCalledTimes(1);
