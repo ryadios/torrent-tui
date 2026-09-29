@@ -149,6 +149,12 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 
 		try {
 			const stats = await operations.getSessionStats();
+			if (
+				!Number.isFinite(stats.download_speed) ||
+				!Number.isFinite(stats.upload_speed)
+			) {
+				throw new TypeError("Session speeds must be finite numbers");
+			}
 			if (!mounted.current) return;
 
 			const sampledAt = Date.now();
