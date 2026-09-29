@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-const POLL_INTERVAL_MS = 2_000;
+export const POLL_INTERVAL_MS = 1_000;
 
 type UseTorrentPollingOptions = {
 	enabled: boolean;

@@ -1,5 +1,6 @@
 export const theme = {
 	primary: "#7aa2f7",
+	cyan: "#7dcfff",
 	success: "#9ece6a",
 	error: "#db4b4b",
 	warning: "#e0af68",

@@ -7,12 +7,18 @@ import {
 	stopTorrent,
 	type TorrentOperations,
 } from "../torrent/actions";
+import type { SessionStats } from "../transmission/types/session";
 import type { TorrentSummary } from "../transmission/types/torrent";
 import { AddDialog } from "./add-dialog";
 import { Footer } from "./footer";
 import { Frame } from "./frame";
 import { keybinds } from "./keybinds";
 import { RemoveDialog } from "./remove-dialog";
+import {
+	SESSION_SPEED_HISTORY_MS,
+	SessionSpeedGraph,
+	type SessionSpeedSample,
+} from "./session-speed-graph";
 import { theme } from "./theme";
 import { TorrentList } from "./torrent-list";
 import { useTorrentPolling } from "./use-torrent-polling";
@@ -98,7 +104,11 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 	const [draft, setDraft] = useState("");
 	const [query, setQuery] = useState("");
 	const [searchEditing, setSearchEditing] = useState(false);
+	const [speedSamples, setSpeedSamples] = useState<SessionSpeedSample[]>([]);
+	const [sessionStats, setSessionStats] = useState<SessionStats>();
+	const [speedNow, setSpeedNow] = useState(Date.now);
 	const busy = useRef(false);
+	const statsBusy = useRef(false);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
 	const pollWarningShown = useRef(false);
@@ -132,6 +142,37 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 		pollWarningShown.current = false;
 		setList((current) => withTorrents(current, torrents, queryRef.current));
 	}, []);
+
+	const refreshSessionStats = useCallback(async (): Promise<void> => {
+		if (statsBusy.current) return;
+		statsBusy.current = true;
+
+		try {
+			const stats = await operations.getSessionStats();
+			if (!mounted.current) return;
+
+			const sampledAt = Date.now();
+			setSpeedNow(sampledAt);
+			setSessionStats(stats);
+			setSpeedSamples((current) => [
+				...current.filter(
+					(sample) =>
+						sample.at >= sampledAt - SESSION_SPEED_HISTORY_MS,
+				),
+				{
+					at: sampledAt,
+					download: stats.download_speed,
+					upload: stats.upload_speed,
+				},
+			]);
+		} catch {
+			if (!mounted.current) return;
+			setSpeedNow(Date.now());
+			setSessionStats(undefined);
+		} finally {
+			statsBusy.current = false;
+		}
+	}, [operations]);
 
 	const applySearch = useCallback((value: string): void => {
 		const nextQuery = value.trim();
@@ -174,6 +215,10 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 			active = false;
 		};
 	}, [applyTorrents, operations]);
+
+	useEffect(() => {
+		void refreshSessionStats();
+	}, [refreshSessionStats]);
 
 	useEffect(() => {
 		selectedHash.current =
@@ -240,9 +285,11 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 	}
 
 	useTorrentPolling({
-		enabled: list.status !== "loading",
+		enabled: true,
 		onTick: () => {
+			setSpeedNow(Date.now());
 			void refresh();
+			void refreshSessionStats();
 		},
 	});
 
@@ -542,59 +589,74 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 				minHeight={0}
 				paddingX={1}
 				paddingY={0}
+				flexDirection="column"
 				backgroundColor={theme.background}
 			>
 				<Frame
 					titleRight={
-						<text fg={theme.primary} selectable={false}>
-							List
-						</text>
+						<box paddingX={1} backgroundColor={theme.background}>
+							<text fg={theme.primary} selectable={false}>
+								List
+							</text>
+						</box>
 					}
 					style={{
 						flexGrow: 1,
+						minHeight: 0,
 						paddingLeft: 1,
 						paddingRight: 1,
 						backgroundColor: theme.background,
 					}}
 				>
-					{list.status === "loading" ? (
-						<box
-							flexGrow={1}
-							flexDirection="column"
-							alignItems="center"
-							justifyContent="center"
-						>
-							<text fg={theme.primary} selectable={false}>
-								{" /\\_/\\"}
-							</text>
-							<text fg={theme.primary} selectable={false}>
-								( o.o )
-							</text>
-							<text fg={theme.primary} selectable={false}>
-								{" > ^ <"}
-							</text>
-							<text fg={theme.textMuted} selectable={false}>
-								Loading torrents...
-							</text>
-						</box>
-					) : list.status === "failed" ? (
-						<box
-							flexGrow={1}
-							alignItems="center"
-							justifyContent="center"
-						>
-							<text fg={theme.textMuted} selectable={false}>
-								Unable to load torrents
-							</text>
-						</box>
-					) : (
-						<TorrentList
-							torrents={visibleTorrents}
-							selectedHash={visibleSelectedHash}
-							emptyMessage={query ? "No matches" : "No torrents"}
-						/>
-					)}
+					<box flexGrow={1} minHeight={0} flexDirection="column">
+						{list.status === "loading" ? (
+							<box
+								flexGrow={1}
+								minHeight={0}
+								flexDirection="column"
+								alignItems="center"
+								justifyContent="center"
+							>
+								<text fg={theme.primary} selectable={false}>
+									{" /\\_/\\"}
+								</text>
+								<text fg={theme.primary} selectable={false}>
+									( o.o )
+								</text>
+								<text fg={theme.primary} selectable={false}>
+									{" > ^ <"}
+								</text>
+								<text fg={theme.textMuted} selectable={false}>
+									Loading torrents...
+								</text>
+							</box>
+						) : list.status === "failed" ? (
+							<box
+								flexGrow={1}
+								minHeight={0}
+								alignItems="center"
+								justifyContent="center"
+							>
+								<text fg={theme.textMuted} selectable={false}>
+									Unable to load torrents
+								</text>
+							</box>
+						) : (
+							<TorrentList
+								torrents={visibleTorrents}
+								selectedHash={visibleSelectedHash}
+								emptyMessage={
+									query ? "No matches" : "No torrents"
+								}
+							/>
+						)}
+					</box>
 				</Frame>
+				<SessionSpeedGraph
+					samples={speedSamples}
+					stats={sessionStats}
+					now={speedNow}
+				/>
 			</box>
 			<Footer
 				canAdd={list.status !== "loading"}

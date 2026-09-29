@@ -23,9 +23,6 @@ export function Frame({ children, titleRight, style }: FrameProps) {
 						position: "absolute",
 						top: -1,
 						right: 2,
-						paddingLeft: 1,
-						paddingRight: 1,
-						backgroundColor: theme.background,
 					}}
 				>
 					{titleRight}
