@@ -1,4 +1,4 @@
-import type { SessionInfo } from "./types/session";
+import type { SessionInfo, SessionStats } from "./types/session";
 import type {
 	TorrentAddResult,
 	TorrentAddSource,
@@ -7,6 +7,7 @@ import type {
 
 type TransmissionMethod =
 	| "session_get"
+	| "session_stats"
 	| "torrent_get"
 	| "torrent_add"
 	| "torrent_start"
@@ -124,6 +125,10 @@ export class TransmissionClient {
 				"peer_port",
 			],
 		});
+	}
+
+	getSessionStats(): Promise<SessionStats> {
+		return this.rpcCall<SessionStats>("session_stats");
 	}
 
 	listTorrents(): Promise<TorrentList> {

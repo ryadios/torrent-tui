@@ -18,4 +18,4 @@ The tasks are ordered by feature group. Design and implementation details will b
 
 - [ ] Add minimal navigation between the list and new views.
 - [ ] Show details for the selected torrent.
-- [ ] Show a session-wide download/upload speed graph using samples collected while the TUI is open.
+- [x] Show a session-wide download/upload speed graph using samples collected while the TUI is open.
