@@ -1165,6 +1165,7 @@ describe("App", () => {
 			const frame = setup.captureCharFrame();
 			const captured = setup.captureSpans();
 			const activeBorder = RGBA.fromHex(theme.primary);
+			const selectedBackground = RGBA.fromHex(theme.backgroundElement);
 			const firstLine = captured.lines.find((line) =>
 				line.spans.some((span) => span.text.includes("First torrent")),
 			);
@@ -1179,13 +1180,16 @@ describe("App", () => {
 			expect(
 				firstLine?.spans.some(
 					(span) =>
-						span.text.includes("│") && span.fg.equals(activeBorder),
+						span.text.includes("│") &&
+						span.fg.equals(activeBorder) &&
+						span.bg.equals(selectedBackground),
 				),
 			).toBe(true);
 			expect(
 				secondLine?.spans.some(
 					(span) =>
-						span.text.includes("│") && span.fg.equals(activeBorder),
+						span.text.includes("│") &&
+						span.bg.equals(selectedBackground),
 				),
 			).toBe(false);
 		} finally {

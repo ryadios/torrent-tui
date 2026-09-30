@@ -93,17 +93,9 @@ function visibleFileRows(
 	]);
 }
 
-function InfoValue({
-	label,
-	value,
-	flexGrow = 0,
-}: {
-	label: string;
-	value: string;
-	flexGrow?: number;
-}) {
+function InfoValue({ label, value }: { label: string; value: string }) {
 	return (
-		<box flexDirection="row" columnGap={1} flexGrow={flexGrow} minWidth={0}>
+		<box flexDirection="row" columnGap={1} minWidth={0}>
 			<text fg={theme.textMuted} selectable={false} wrapMode="none">
 				{label}
 			</text>
@@ -120,13 +112,7 @@ function InfoValue({
 	);
 }
 
-function TorrentOverview({
-	details,
-	contentWidth,
-}: {
-	details: TorrentDetailsData;
-	contentWidth: number;
-}) {
+function TorrentOverview({ details }: { details: TorrentDetailsData }) {
 	return (
 		<box flexGrow={1} minHeight={0} flexDirection="column">
 			<InfoValue
@@ -137,30 +123,19 @@ function TorrentOverview({
 				label="Privacy"
 				value={details.is_private ? "Private" : "Public"}
 			/>
-			<box flexDirection="row" columnGap={2} width={contentWidth}>
-				<InfoValue
-					label="Downloaded"
-					value={formatSize(details.downloaded_ever)}
-					flexGrow={1}
-				/>
-				<InfoValue
-					label="Uploaded"
-					value={formatSize(details.uploaded_ever)}
-					flexGrow={1}
-				/>
-			</box>
-			<box flexDirection="row" columnGap={2} width={contentWidth}>
-				<InfoValue
-					label="Ratio"
-					value={`${details.upload_ratio.toFixed(1)}x`}
-					flexGrow={1}
-				/>
-				<InfoValue
-					label="Peers"
-					value={String(details.peers_connected)}
-					flexGrow={1}
-				/>
-			</box>
+			<InfoValue
+				label="Downloaded"
+				value={formatSize(details.downloaded_ever)}
+			/>
+			<InfoValue
+				label="Uploaded"
+				value={formatSize(details.uploaded_ever)}
+			/>
+			<InfoValue
+				label="Ratio"
+				value={`${details.upload_ratio.toFixed(1)}x`}
+			/>
+			<InfoValue label="Peers" value={String(details.peers_connected)} />
 		</box>
 	);
 }
@@ -342,7 +317,7 @@ export function TorrentDetailsPane({
 
 	return (
 		<Frame
-			borderColor={focused ? theme.cyan : theme.borderSubtle}
+			borderColor={focused ? theme.primary : theme.borderSubtle}
 			titleRight={
 				<box
 					flexDirection="row"
@@ -436,10 +411,7 @@ export function TorrentDetailsPane({
 						</text>
 					</box>
 				) : tab === "overview" ? (
-					<TorrentOverview
-						details={details}
-						contentWidth={contentWidth}
-					/>
+					<TorrentOverview details={details} />
 				) : !metadataReady ? (
 					<box
 						flexGrow={1}

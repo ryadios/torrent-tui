@@ -148,7 +148,7 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 		? Math.min(80, Math.floor(pairedWidth * 0.4))
 		: 0;
 	const detailsWidth = showSpeed ? pairedWidth - speedWidth : detailsRowWidth;
-	const detailPaneHeight = terminalHeight < 28 ? 9 : 13;
+	const detailPaneHeight = terminalHeight < 28 ? 10 : 13;
 	const activeHash = useRef<string | undefined>(visibleSelectedHash);
 	activeHash.current = visibleSelectedHash;
 
@@ -732,7 +732,9 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 			>
 				<Frame
 					borderColor={
-						focusedPane === "list" ? theme.cyan : theme.borderSubtle
+						focusedPane === "list"
+							? theme.primary
+							: theme.borderSubtle
 					}
 					titleRight={
 						<box paddingX={1} backgroundColor={theme.background}>

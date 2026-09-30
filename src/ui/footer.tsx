@@ -48,7 +48,7 @@ export function Footer({
 						: []),
 					...(filesAvailable ? [{ key: "←/→", label: "tabs" }] : []),
 					...(detailsTab === "files"
-						? [{ key: "Enter", label: "toggle" }]
+						? [{ key: "Enter", label: "Expand" }]
 						: []),
 				]
 			: [{ key: "j/k", label: "select" }];
