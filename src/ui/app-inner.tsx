@@ -1,4 +1,4 @@
-import { useKeyboard } from "@opentui/react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	addTorrent,
@@ -20,6 +20,11 @@ import {
 	type SessionSpeedSample,
 } from "./session-speed-graph";
 import { theme } from "./theme";
+import {
+	type DetailsTab,
+	TorrentDetailsPane,
+	type TorrentDetailsState,
+} from "./torrent-details";
 import { TorrentList } from "./torrent-list";
 import { useTorrentPolling } from "./use-torrent-polling";
 
@@ -55,6 +60,11 @@ type RemoveState =
 			hash: string;
 			pending: boolean;
 	  };
+
+type TorrentDetailsRequest = {
+	torrentHash: string;
+	includeFiles: boolean;
+};
 
 const SEARCH_DELAY_MS = 150;
 
@@ -98,6 +108,8 @@ function withTorrents(
 }
 
 export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
+	const { width: terminalWidth, height: terminalHeight } =
+		useTerminalDimensions();
 	const [list, setList] = useState<ListState>({ status: "loading" });
 	const [add, setAdd] = useState<AddState>({ open: false });
 	const [remove, setRemove] = useState<RemoveState>({ open: false });
@@ -107,8 +119,17 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 	const [speedSamples, setSpeedSamples] = useState<SessionSpeedSample[]>([]);
 	const [sessionStats, setSessionStats] = useState<SessionStats>();
 	const [speedNow, setSpeedNow] = useState(Date.now);
+	const [focusedPane, setFocusedPane] = useState<"list" | "details">("list");
+	const [detailsTab, setDetailsTab] = useState<DetailsTab>("overview");
+	const [torrentDetails, setTorrentDetails] = useState<TorrentDetailsState>();
 	const busy = useRef(false);
 	const statsBusy = useRef(false);
+	const activeDetailsRequest = useRef<TorrentDetailsRequest | undefined>(
+		undefined,
+	);
+	const queuedDetailsRequest = useRef<TorrentDetailsRequest | undefined>(
+		undefined,
+	);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
 	const pollWarningShown = useRef(false);
@@ -121,6 +142,25 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 		visibleTorrents,
 		list.status === "loaded" ? list.selectedHash : undefined,
 	);
+	const selectedDetails =
+		visibleSelectedHash && torrentDetails?.hash === visibleSelectedHash
+			? torrentDetails.data
+			: undefined;
+	const filesAvailable =
+		(selectedDetails?.metadata_percent_complete ?? 0) >= 1;
+	const visibleDetailsTab =
+		detailsTab === "files" && !filesAvailable ? "overview" : detailsTab;
+	const lowerPanesVisible = terminalHeight >= 16;
+	const detailsRowWidth = Math.max(0, terminalWidth - 2);
+	const pairedWidth = detailsRowWidth - 2;
+	const showSpeed = lowerPanesVisible && pairedWidth >= 80;
+	const speedWidth = showSpeed
+		? Math.min(80, Math.floor(pairedWidth * 0.4))
+		: 0;
+	const detailsWidth = showSpeed ? pairedWidth - speedWidth : detailsRowWidth;
+	const detailPaneHeight = terminalHeight < 28 ? 10 : 13;
+	const activeHash = useRef<string | undefined>(visibleSelectedHash);
+	activeHash.current = visibleSelectedHash;
 
 	const showMessage = (
 		message: string,
@@ -179,6 +219,127 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 			statsBusy.current = false;
 		}
 	}, [operations]);
+
+	const refreshTorrentDetails = useCallback(
+		async (torrentHash: string, includeFiles: boolean): Promise<void> => {
+			const request = { torrentHash, includeFiles };
+			const activeRequest = activeDetailsRequest.current;
+			if (activeRequest) {
+				queuedDetailsRequest.current =
+					activeRequest.torrentHash === torrentHash &&
+					activeRequest.includeFiles === includeFiles
+						? undefined
+						: request;
+				return;
+			}
+			activeDetailsRequest.current = request;
+			setTorrentDetails((current) =>
+				current?.hash === torrentHash
+					? { ...current, unavailable: false }
+					: {
+							hash: torrentHash,
+							unavailable: false,
+							stale: false,
+						},
+			);
+
+			try {
+				const data = await operations.getTorrentDetails(
+					torrentHash,
+					includeFiles,
+				);
+				if (!data) throw new Error("Torrent details not found");
+				if (!mounted.current || activeHash.current !== torrentHash)
+					return;
+
+				setTorrentDetails((current) => ({
+					hash: torrentHash,
+					data: {
+						...data,
+						files:
+							data.files ??
+							(current?.hash === torrentHash
+								? current.data?.files
+								: undefined),
+					},
+					unavailable: false,
+					stale: false,
+				}));
+			} catch {
+				if (!mounted.current || activeHash.current !== torrentHash)
+					return;
+				setTorrentDetails((current) =>
+					current?.hash === torrentHash && current.data
+						? {
+								...current,
+								unavailable: false,
+								stale: true,
+							}
+						: {
+								hash: torrentHash,
+								unavailable: true,
+								stale: false,
+							},
+				);
+			} finally {
+				if (activeDetailsRequest.current === request) {
+					const queuedRequest = queuedDetailsRequest.current;
+					queuedDetailsRequest.current = undefined;
+					activeDetailsRequest.current = undefined;
+
+					if (
+						mounted.current &&
+						queuedRequest &&
+						(queuedRequest.torrentHash !== torrentHash ||
+							queuedRequest.includeFiles !== includeFiles)
+					) {
+						void refreshTorrentDetails(
+							queuedRequest.torrentHash,
+							queuedRequest.includeFiles,
+						);
+					}
+				}
+			}
+		},
+		[operations],
+	);
+
+	useEffect(() => {
+		if (!visibleSelectedHash) {
+			queuedDetailsRequest.current = undefined;
+			setTorrentDetails(undefined);
+			return;
+		}
+		setDetailsTab("overview");
+	}, [visibleSelectedHash]);
+
+	useEffect(() => {
+		if (!visibleSelectedHash || !lowerPanesVisible) {
+			queuedDetailsRequest.current = undefined;
+			return;
+		}
+		void refreshTorrentDetails(
+			visibleSelectedHash,
+			visibleDetailsTab === "files",
+		);
+	}, [
+		visibleSelectedHash,
+		visibleDetailsTab,
+		lowerPanesVisible,
+		refreshTorrentDetails,
+	]);
+
+	useEffect(() => {
+		if (!lowerPanesVisible && focusedPane === "details") {
+			setFocusedPane("list");
+		}
+	}, [focusedPane, lowerPanesVisible]);
+
+	useEffect(() => {
+		if (detailsTab === "files" && !filesAvailable) {
+			setDetailsTab("overview");
+		}
+	}, [detailsTab, filesAvailable]);
 
 	const applySearch = useCallback((value: string): void => {
 		const nextQuery = value.trim();
@@ -296,6 +457,12 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 			setSpeedNow(Date.now());
 			void refresh();
 			void refreshSessionStats();
+			if (lowerPanesVisible && visibleSelectedHash) {
+				void refreshTorrentDetails(
+					visibleSelectedHash,
+					visibleDetailsTab === "files",
+				);
+			}
 		},
 	});
 
@@ -524,6 +691,19 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 			return;
 		}
 		if (add.open || remove.open) return;
+		if (lowerPanesVisible && !key.ctrl && !key.meta && key.name === "tab") {
+			key.preventDefault();
+			setFocusedPane((current) =>
+				key.shift
+					? current === "details"
+						? "list"
+						: "details"
+					: current === "list"
+						? "details"
+						: "list",
+			);
+			return;
+		}
 		// Ignore modified shortcuts.
 		if (key.ctrl || key.meta || key.shift) return;
 		if (key.name === "escape" && queryRef.current) {
@@ -564,6 +744,7 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 			openRemove();
 			return;
 		}
+		if (focusedPane === "details") return;
 		// Select the next torrent.
 		if (key.name === "j" || key.name === "down") {
 			select("next");
@@ -599,9 +780,21 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 				backgroundColor={theme.background}
 			>
 				<Frame
+					borderColor={
+						focusedPane === "list"
+							? theme.primary
+							: theme.borderSubtle
+					}
 					titleRight={
 						<box paddingX={1} backgroundColor={theme.background}>
-							<text fg={theme.primary} selectable={false}>
+							<text
+								fg={
+									focusedPane === "list"
+										? theme.primary
+										: theme.textMuted
+								}
+								selectable={false}
+							>
 								List
 							</text>
 						</box>
@@ -658,15 +851,42 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 						)}
 					</box>
 				</Frame>
-				<SessionSpeedGraph
-					samples={speedSamples}
-					stats={sessionStats}
-					now={speedNow}
-				/>
+				{lowerPanesVisible ? (
+					<box
+						flexDirection="row"
+						columnGap={2}
+						flexShrink={0}
+						height={detailPaneHeight}
+						width="100%"
+					>
+						<TorrentDetailsPane
+							key={visibleSelectedHash ?? "no-selection"}
+							state={torrentDetails}
+							selectedHash={visibleSelectedHash}
+							tab={visibleDetailsTab}
+							focused={focusedPane === "details"}
+							width={detailsWidth}
+							height={detailPaneHeight}
+							onTabChange={setDetailsTab}
+						/>
+						{showSpeed ? (
+							<SessionSpeedGraph
+								samples={speedSamples}
+								stats={sessionStats}
+								now={speedNow}
+								width={speedWidth}
+								height={detailPaneHeight}
+							/>
+						) : null}
+					</box>
+				) : null}
 			</box>
 			<Footer
 				canAdd={list.status !== "loading"}
 				hasSelection={visibleSelectedHash !== undefined}
+				focusedPane={focusedPane}
+				detailsTab={visibleDetailsTab}
+				filesAvailable={filesAvailable}
 				search={
 					list.status === "loaded"
 						? {

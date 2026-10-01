@@ -13,6 +13,7 @@ import { useTorrentPolling } from "../../../src/ui/use-torrent-polling";
 
 const operations: TorrentOperations = {
 	listTorrents: () => new Promise(() => {}),
+	getTorrentDetails: () => new Promise(() => {}),
 	getSessionStats: () => new Promise(() => {}),
 	addTorrent: async () => ({
 		torrent_added: {

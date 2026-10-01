@@ -1,12 +1,13 @@
 import type { BoxRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
-import { stringWidth } from "bun";
 import { useEffect, useRef, useState } from "react";
 import type { TorrentSummary } from "../transmission/types/torrent";
 import { FullBorder } from "./borders";
 import { formatRate } from "./format-rate";
+import { formatSize } from "./format-size";
 import { ProgressBar } from "./progress-bar";
 import { theme } from "./theme";
+import { truncateEnd } from "./truncate-text";
 
 const MIN_NAME_WIDTH = 36;
 const STATUS_WIDTH = 12;
@@ -96,23 +97,6 @@ function formatEta(eta: number): string {
 	return "∞";
 }
 
-function formatSize(bytes: number): string {
-	if (!Number.isFinite(bytes) || bytes < 0) return "—";
-
-	const units = ["B", "KB", "MB", "GB", "TB"];
-	let value = bytes;
-	let unitIndex = 0;
-
-	while (value >= 1000 && unitIndex < units.length - 1) {
-		value /= 1000;
-		unitIndex += 1;
-	}
-
-	return unitIndex === 0
-		? `${Math.round(value)} ${units[unitIndex]}`
-		: `${value.toFixed(1)} ${units[unitIndex]}`;
-}
-
 function getTorrentLayout(width: number): TorrentLayout {
 	const contentWidth = Math.max(0, Math.floor(width) - CONTENT_PADDING);
 	let fixedWidth = 0;
@@ -148,25 +132,6 @@ function getTorrentLayout(width: number): TorrentLayout {
 		showSize,
 		showRates,
 	};
-}
-
-const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-function truncateTorrentName(name: string, maxWidth: number): string {
-	if (stringWidth(name) <= maxWidth) return name;
-	if (maxWidth <= 0) return "";
-
-	let result = "";
-	let width = 0;
-
-	for (const { segment } of graphemes.segment(name)) {
-		const segmentWidth = stringWidth(segment);
-		if (width + segmentWidth > maxWidth - 1) break;
-		result += segment;
-		width += segmentWidth;
-	}
-
-	return `${result}…`;
 }
 
 function TorrentCell({
@@ -248,7 +213,7 @@ function TorrentRow({
 					wrapMode="none"
 					style={{ width: nameWidth, flexShrink: 0 }}
 				>
-					{truncateTorrentName(torrent.name, nameWidth)}
+					{truncateEnd(torrent.name, nameWidth)}
 				</text>
 				{progressWidth > 0 ? (
 					<ProgressBar

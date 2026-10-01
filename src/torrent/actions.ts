@@ -8,6 +8,7 @@ import { resolveTorrentSource } from "./source";
 export type TorrentOperations = Pick<
 	TransmissionClient,
 	| "listTorrents"
+	| "getTorrentDetails"
 	| "getSessionStats"
 	| "addTorrent"
 	| "startTorrent"

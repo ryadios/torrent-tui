@@ -6,14 +6,20 @@ type FrameProps = {
 	children?: BoxProps["children"];
 	titleRight?: BoxProps["children"];
 	style?: BoxProps["style"];
+	borderColor?: string;
 };
 
-export function Frame({ children, titleRight, style }: FrameProps) {
+export function Frame({
+	children,
+	titleRight,
+	style,
+	borderColor = theme.borderSubtle,
+}: FrameProps) {
 	return (
 		<box
 			border={FullBorder.border}
 			customBorderChars={FullBorder.customBorderChars}
-			borderColor={theme.borderSubtle}
+			borderColor={borderColor}
 			style={style}
 		>
 			{children}

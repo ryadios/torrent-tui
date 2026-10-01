@@ -36,7 +36,7 @@ src/
 │   ├── client.ts                     # Transmission RPC client and session handling
 │   └── types/
 │       ├── session.ts                # Transmission session response types
-│       └── torrent.ts                # Torrent list, reference, and add-source types
+│       └── torrent.ts                # Torrent list, details, reference, and add-source types
 └── ui/
     ├── app.tsx                       # Render the shell and own the quit boundary
     ├── app-inner.tsx                 # Render the current main content area
@@ -44,15 +44,20 @@ src/
     ├── borders.ts                    # Shared border presets
     ├── dialog.tsx                    # Shared renderer-root modal shell and hints
     ├── footer.tsx                    # Render footer key hints
+    ├── format-rate.ts                # Format transfer rates
+    ├── format-size.ts                # Format byte sizes
     ├── frame.tsx                     # Render titled content frames
     ├── header.tsx                    # Render the application header
     ├── keybinds.ts                   # Define shell key hints
     ├── progress-bar.tsx              # Render compact torrent progress
     ├── remove-dialog.tsx             # Confirm removal with optional data deletion
+    ├── session-speed-graph.tsx       # Render sampled session transfer rates
     ├── theme.ts                      # Define Tokyo Night theme values
     ├── torrent-browser.tsx           # Browse readable directories and torrent files
+    ├── torrent-details.tsx           # Render selected torrent overview and file tree
     ├── torrent-list.tsx              # Render the torrent list and rows
     ├── torrent-paths.ts              # Resolve and suggest local torrent paths
+    ├── truncate-text.ts              # Truncate display text at the end
     └── use-torrent-polling.ts        # Schedule TUI-only live torrent refreshes
 
 tests/

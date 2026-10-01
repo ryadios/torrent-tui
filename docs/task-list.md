@@ -11,11 +11,11 @@ The tasks are ordered by feature group. Design and implementation details will b
 ## 2. File selection and download location
 
 - [ ] Show Transmission's default download location and allow an add-time destination.
-- [ ] View a selected torrent's files after metadata becomes available.
+- [x] View a selected torrent's files after metadata becomes available.
 - [ ] Choose which files of an added torrent are wanted.
 
 ## 3. Additional views
 
-- [ ] Add minimal navigation between the list and new views.
-- [ ] Show details for the selected torrent.
+- [x] Add minimal navigation between the list and new views.
+- [x] Show details for the selected torrent.
 - [x] Show a session-wide download/upload speed graph using samples collected while the TUI is open.

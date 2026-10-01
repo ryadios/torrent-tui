@@ -19,6 +19,24 @@ export type TorrentList = {
 	torrents: TorrentSummary[];
 };
 
+export type TorrentFile = {
+	name: string;
+	length: number;
+	bytes_completed: number;
+};
+
+export type TorrentDetails = Pick<
+	TorrentSummary,
+	"hash_string" | "name" | "upload_ratio" | "peers_connected"
+> & {
+	download_dir: string;
+	downloaded_ever: number;
+	uploaded_ever: number;
+	is_private: boolean;
+	metadata_percent_complete: number;
+	files?: TorrentFile[];
+};
+
 export type TorrentReference = {
 	id: number;
 	hash_string: string;
