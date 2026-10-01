@@ -61,6 +61,11 @@ type RemoveState =
 			pending: boolean;
 	  };
 
+type TorrentDetailsRequest = {
+	torrentHash: string;
+	includeFiles: boolean;
+};
+
 const SEARCH_DELAY_MS = 150;
 
 function filterByName(
@@ -119,7 +124,12 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 	const [torrentDetails, setTorrentDetails] = useState<TorrentDetailsState>();
 	const busy = useRef(false);
 	const statsBusy = useRef(false);
-	const detailsBusy = useRef(false);
+	const activeDetailsRequest = useRef<TorrentDetailsRequest | undefined>(
+		undefined,
+	);
+	const queuedDetailsRequest = useRef<TorrentDetailsRequest | undefined>(
+		undefined,
+	);
 	const mounted = useRef(true);
 	const selectedHash = useRef<string | undefined>(undefined);
 	const pollWarningShown = useRef(false);
@@ -212,8 +222,17 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 
 	const refreshTorrentDetails = useCallback(
 		async (torrentHash: string, includeFiles: boolean): Promise<void> => {
-			if (detailsBusy.current) return;
-			detailsBusy.current = true;
+			const request = { torrentHash, includeFiles };
+			const activeRequest = activeDetailsRequest.current;
+			if (activeRequest) {
+				queuedDetailsRequest.current =
+					activeRequest.torrentHash === torrentHash &&
+					activeRequest.includeFiles === includeFiles
+						? undefined
+						: request;
+				return;
+			}
+			activeDetailsRequest.current = request;
 			setTorrentDetails((current) =>
 				current?.hash === torrentHash
 					? { ...current, unavailable: false }
@@ -263,7 +282,23 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 							},
 				);
 			} finally {
-				detailsBusy.current = false;
+				if (activeDetailsRequest.current === request) {
+					const queuedRequest = queuedDetailsRequest.current;
+					queuedDetailsRequest.current = undefined;
+					activeDetailsRequest.current = undefined;
+
+					if (
+						mounted.current &&
+						queuedRequest &&
+						(queuedRequest.torrentHash !== torrentHash ||
+							queuedRequest.includeFiles !== includeFiles)
+					) {
+						void refreshTorrentDetails(
+							queuedRequest.torrentHash,
+							queuedRequest.includeFiles,
+						);
+					}
+				}
 			}
 		},
 		[operations],
@@ -271,14 +306,28 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 
 	useEffect(() => {
 		if (!visibleSelectedHash) {
+			queuedDetailsRequest.current = undefined;
 			setTorrentDetails(undefined);
 			return;
 		}
 		setDetailsTab("overview");
-		if (lowerPanesVisible) {
-			void refreshTorrentDetails(visibleSelectedHash, false);
+	}, [visibleSelectedHash]);
+
+	useEffect(() => {
+		if (!visibleSelectedHash || !lowerPanesVisible) {
+			queuedDetailsRequest.current = undefined;
+			return;
 		}
-	}, [visibleSelectedHash, lowerPanesVisible, refreshTorrentDetails]);
+		void refreshTorrentDetails(
+			visibleSelectedHash,
+			visibleDetailsTab === "files",
+		);
+	}, [
+		visibleSelectedHash,
+		visibleDetailsTab,
+		lowerPanesVisible,
+		refreshTorrentDetails,
+	]);
 
 	useEffect(() => {
 		if (!lowerPanesVisible && focusedPane === "details") {
