@@ -1,4 +1,5 @@
-import { stringWidth, stripANSI } from "bun";
+import { stripANSI } from "bun";
+import packageMetadata from "../../package.json" with { type: "json" };
 import {
 	addTorrent,
 	type RefreshOutcome,
@@ -8,6 +9,7 @@ import {
 	type TorrentOperations,
 } from "../torrent/actions";
 import type { TorrentSummary } from "../transmission/types/torrent";
+import { formatRate } from "../ui/format-rate";
 
 export type CliOutput = {
 	stdout: (text: string) => void;
@@ -19,8 +21,18 @@ const defaultOutput: CliOutput = {
 	stderr: (text) => process.stderr.write(`${text}\n`),
 };
 
-const usage =
-	"Usage: torrent-tui [list | add <source> | start <hash> | stop <hash> | remove <hash>]";
+const help = [
+	"usage: torrent-tui <command>",
+	"",
+	"commands:",
+	"  list                       show torrent status, progress, rates, and hashes",
+	"  add <source>               add a local .torrent path, magnet link, or URL",
+	"  start <hash>               start a torrent using its full hash",
+	"  stop <hash>                stop a torrent using its full hash",
+	"  remove <hash>              remove a torrent; downloaded data is kept",
+	"  help, --help, -h           show this help",
+	"  version, --version, -v     print the installed version",
+] as const;
 
 const statuses: Record<number, string> = {
 	0: "Stopped",
@@ -45,22 +57,6 @@ function formatStatus(torrent: TorrentSummary): string {
 	return statuses[torrent.status] ?? `Status ${torrent.status}`;
 }
 
-function formatRate(bytesPerSecond: number): string {
-	const rate = Math.max(0, bytesPerSecond);
-	const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
-	let value = rate;
-	let unitIndex = 0;
-
-	if (value < 1000) return `${Math.round(value)} B/s`;
-
-	while (value >= 1000 && unitIndex < units.length - 1) {
-		value /= 1000;
-		unitIndex += 1;
-	}
-
-	return `${value.toFixed(1)} ${units[unitIndex]}`;
-}
-
 function formatProgress(percentDone: number): string {
 	const percent = Number.isFinite(percentDone)
 		? Math.min(1, Math.max(0, percentDone))
@@ -68,64 +64,31 @@ function formatProgress(percentDone: number): string {
 	return `${Math.round(percent * 100)}%`;
 }
 
-function pad(value: string, width: number): string {
-	return value + " ".repeat(Math.max(0, width - stringWidth(value)));
+function torrentMarker(torrent: TorrentSummary): string {
+	if (torrent.error !== 0) return "✗";
+	return torrent.is_finished ? "✓" : "•";
 }
 
 function printTorrentList(torrents: TorrentSummary[], output: CliOutput): void {
+	output.stdout(`Torrents (${torrents.length})`);
+	output.stdout("");
+
 	if (torrents.length === 0) {
 		output.stdout("No torrents.");
 		return;
 	}
 
-	const headers = [
-		"HASH",
-		"NAME",
-		"STATUS",
-		"PROGRESS",
-		"DOWNLOAD",
-		"UPLOAD",
-	];
-	const rows = torrents.map((torrent) => [
-		sanitizeTerminalText(torrent.hash_string),
-		sanitizeTerminalText(torrent.name),
-		formatStatus(torrent),
-		formatProgress(torrent.percent_done),
-		`↓ ${formatRate(torrent.rate_download)}`,
-		`↑ ${formatRate(torrent.rate_upload)}`,
-	]);
-	const widths = headers.map((header, index) =>
-		Math.max(
-			stringWidth(header),
-			...rows.map((row) => stringWidth(row[index] ?? "")),
-		),
-	);
-
-	output.stdout(
-		headers
-			.map((header, index) =>
-				index === headers.length - 1
-					? header
-					: pad(header, widths[index] ?? stringWidth(header)),
-			)
-			.join("  "),
-	);
-	for (const row of rows) {
+	for (const torrent of torrents) {
 		output.stdout(
-			row
-				.map((value, index) =>
-					index === row.length - 1
-						? value
-						: pad(value, widths[index] ?? stringWidth(value)),
-				)
-				.join("  "),
+			`${torrentMarker(torrent)} ${sanitizeTerminalText(torrent.name)} — ${formatStatus(torrent)} · ${formatProgress(torrent.percent_done)} · ↓ ${formatRate(torrent.rate_download)} · ↑ ${formatRate(torrent.rate_upload)}`,
 		);
+		output.stdout(`  hash: ${sanitizeTerminalText(torrent.hash_string)}`);
 	}
 }
 
 function printOperationError(output: CliOutput, error: unknown): number {
 	output.stderr(
-		`Error: ${error instanceof Error ? error.message : String(error)}`,
+		`✗ Error: ${error instanceof Error ? error.message : String(error)}`,
 	);
 	return 1;
 }
@@ -162,7 +125,9 @@ async function runAdd(
 				: outcome.addResult.torrent_duplicate;
 		const prefix =
 			"torrent_added" in outcome.addResult ? "Added" : "Already added";
-		output.stdout(`${prefix} ${reference.name} (${reference.hash_string})`);
+		output.stdout(
+			`✓ ${prefix} ${reference.name} (${reference.hash_string})`,
+		);
 		printRefreshWarning(output, outcome);
 		return 0;
 	} catch (error) {
@@ -186,7 +151,7 @@ async function runMutation(
 }
 
 function usageError(output: CliOutput): number {
-	output.stderr(usage);
+	for (const line of help) output.stderr(line);
 	return 2;
 }
 
@@ -200,6 +165,16 @@ export async function runCli(
 		stderr: (text) => output.stderr(sanitizeTerminalText(text)),
 	};
 	const command = args[0];
+	if (command === "help" || command === "--help" || command === "-h") {
+		if (args.length !== 1) return usageError(safeOutput);
+		for (const line of help) safeOutput.stdout(line);
+		return 0;
+	}
+	if (command === "version" || command === "--version" || command === "-v") {
+		if (args.length !== 1) return usageError(safeOutput);
+		safeOutput.stdout(packageMetadata.version);
+		return 0;
+	}
 
 	if (command === "list") {
 		return args.length === 1
@@ -218,7 +193,7 @@ export async function runCli(
 		if (!hash) return usageError(safeOutput);
 		return runMutation(
 			() => startTorrent(operations, hash),
-			`Started ${hash}`,
+			`✓ Started ${hash}`,
 			safeOutput,
 		);
 	}
@@ -228,7 +203,7 @@ export async function runCli(
 		if (!hash) return usageError(safeOutput);
 		return runMutation(
 			() => stopTorrent(operations, hash),
-			`Stopped ${hash}`,
+			`✓ Stopped ${hash}`,
 			safeOutput,
 		);
 	}
@@ -238,7 +213,7 @@ export async function runCli(
 		if (!hash) return usageError(safeOutput);
 		return runMutation(
 			() => removeTorrent(operations, hash),
-			`Removed ${hash} (local data kept)`,
+			`✓ Removed ${hash} (local data kept)`,
 			safeOutput,
 		);
 	}
