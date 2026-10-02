@@ -1,35 +1,63 @@
-# torrent-tui
+<h1 align="center">torrent-tui</h1>
 
-**A keyboard-driven terminal interface for managing a Transmission session.**
+<p align="center">
+  <strong>A keyboard-driven terminal interface for managing a Transmission session.</strong><br>
+  View torrent progress and transfer rates, inspect details and files, and manage downloads from the terminal.
+</p>
 
-View torrent progress and transfer rates, inspect torrent details and files, and manage downloads without leaving the terminal.
+<p align="center">
+  <a href="https://www.npmjs.com/package/torrent-tui">
+    <img alt="npm version" src="https://img.shields.io/npm/v/torrent-tui?style=for-the-badge&amp;logo=npm">
+  </a>
+  <a href="https://www.npmjs.com/package/torrent-tui">
+    <img alt="npm unpacked size" src="https://img.shields.io/npm/unpacked-size/torrent-tui?style=for-the-badge">
+  </a>
+  <a href="https://www.npmjs.com/package/torrent-tui">
+    <img alt="npm license" src="https://img.shields.io/npm/l/torrent-tui?style=for-the-badge">
+  </a>
+</p>
 
-[Quick start](#quick-start) · [Controls](#controls) · [CLI](#cli) · [Development](#development)
+<p align="center">
+  <a href="#install">Install</a> · <a href="#quickstart">Quickstart</a> · <a href="#commands">Commands</a> · <a href="#development">Development</a>
+</p>
 
-![torrent-tui terminal interface](./docs/screenshot.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ryadios/torrent-tui/main/docs/screenshot.png" alt="torrent-tui terminal interface" width="100%">
+</p>
 
 > [!NOTE]
 > Requires Bun and a running Transmission daemon with RPC enabled at `http://127.0.0.1:9091/transmission/rpc`. The RPC endpoint is fixed in this version.
 
-## Quick start
+## Install
 
 ```bash
 git clone https://github.com/ryadios/torrent-tui.git
 cd torrent-tui
 bun install
+```
+
+## Quickstart
+
+Start the TUI:
+
+```bash
 bun dev
 ```
 
-## Controls
+| Key | Action |
+| --- | --- |
+| `j` / `k` or arrow keys | Move through torrents |
+| `/` | Search by name; `Enter` applies, `Esc` clears |
+| `Tab` / `Shift+Tab` | Switch focus between the list and details |
+| `a` | Add a `.torrent` file, magnet link, or URL |
+| `s` / `p` | Start / stop the selected torrent |
+| `d` | Remove the selected torrent |
+| `Enter` / `Shift+Enter` | In the remove prompt, keep / delete downloaded data |
+| `←` / `→` | Switch tabs in the details pane |
+| `j` / `k`, `Enter` | In the Files tab, move and expand items |
+| `q` | Quit |
 
-- Move through torrents with `j` / `k` or the arrow keys.
-- Search by name with `/`; press `Enter` to apply or `Esc` to clear.
-- Press `Tab` to switch between the torrent list and details pane. In the details pane, use left/right arrows to switch tabs; in the Files tab, use `j` / `k` to move and `Enter` to expand.
-- Press `a` to add a `.torrent` file, magnet link, or URL; `s` to start, `p` to stop, or `d` to remove the selected torrent.
-- In the remove prompt, `Enter` keeps downloaded data; `Shift+Enter` deletes it.
-- Press `q` to quit.
-
-## CLI
+## Commands
 
 ```bash
 bun run src/index.tsx --help
