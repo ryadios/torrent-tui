@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/torrent-tui">
-    <img alt="npm version" src="https://img.shields.io/npm/v/torrent-tui?style=for-the-badge&amp;logo=npm">
+  <a href="https://github.com/ryadios/torrent-tui/blob/main/package.json">
+    <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-4776e6?style=for-the-badge">
   </a>
   <a href="https://www.npmjs.com/package/torrent-tui">
     <img alt="npm unpacked size" src="https://img.shields.io/npm/unpacked-size/torrent-tui?style=for-the-badge">
