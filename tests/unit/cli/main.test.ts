@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import packageMetadata from "../../../package.json" with { type: "json" };
 import { type CliOutput, runCli } from "../../../src/cli/main";
 import type { TorrentOperations } from "../../../src/torrent/actions";
 import type {
@@ -72,14 +73,30 @@ function torrent(
 }
 
 describe("CLI", () => {
-	test("prints an aligned list with the full torrent hash", async () => {
+	test("prints compact torrent entries with full hashes and state markers", async () => {
 		const captured = captureOutput();
 		const hash = "0123456789012345678901234567890123456789";
+		const finishedHash = "1111111111111111111111111111111111111111";
+		const errorHash = "2222222222222222222222222222222222222222";
+		const finished = torrent("Finished torrent", finishedHash, 6);
+		finished.percent_done = 1;
+		finished.rate_download = 0;
+		finished.rate_upload = 3200;
+		finished.is_finished = true;
+		const errored = torrent("Broken torrent", errorHash);
+		errored.percent_done = 0.25;
+		errored.rate_download = 0;
+		errored.error = 1;
+		errored.error_string = "tracker unavailable";
 		const result = await runCli(
 			["list"],
 			makeOperations({
 				listTorrents: async () => ({
-					torrents: [torrent("Example torrent", hash)],
+					torrents: [
+						torrent("Example torrent", hash),
+						finished,
+						errored,
+					],
 				}),
 			}),
 			captured.output,
@@ -87,17 +104,19 @@ describe("CLI", () => {
 
 		expect(result).toBe(0);
 		expect(captured.stderr).toEqual([]);
-		expect(captured.stdout).toHaveLength(2);
-		expect(captured.stdout[0]).toContain("HASH");
-		expect(captured.stdout[0]).toContain("DOWNLOAD");
-		expect(captured.stdout[1]).toContain(hash);
-		expect(captured.stdout[1]).toContain("Downloading");
-		expect(captured.stdout[1]).toContain("50%");
-		expect(captured.stdout[1]).toContain("↓ 1.5 KB/s");
-		expect(captured.stdout[1]).toContain("↑ 0 B/s");
+		expect(captured.stdout).toEqual([
+			"Torrents (3)",
+			"",
+			"• Example torrent — Downloading · 50% · ↓ 1.5 KB/s · ↑ 0 B/s",
+			`  hash: ${hash}`,
+			"✓ Finished torrent — Seeding · 100% · ↓ 0 B/s · ↑ 3.2 KB/s",
+			`  hash: ${finishedHash}`,
+			"✗ Broken torrent — Error: tracker unavailable · 25% · ↓ 0 B/s · ↑ 0 B/s",
+			`  hash: ${errorHash}`,
+		]);
 	});
 
-	test("reports an empty list without a table header", async () => {
+	test("reports an empty list beneath its heading", async () => {
 		const captured = captureOutput();
 		const result = await runCli(
 			["list"],
@@ -106,7 +125,7 @@ describe("CLI", () => {
 		);
 
 		expect(result).toBe(0);
-		expect(captured.stdout).toEqual(["No torrents."]);
+		expect(captured.stdout).toEqual(["Torrents (0)", "", "No torrents."]);
 		expect(captured.stderr).toEqual([]);
 	});
 
@@ -138,8 +157,8 @@ describe("CLI", () => {
 		).toBe(0);
 
 		expect(captured.stdout).toEqual([
-			"Added example.torrent (abc123)",
-			"Already added example.torrent (abc123)",
+			"✓ Added example.torrent (abc123)",
+			"✓ Already added example.torrent (abc123)",
 		]);
 	});
 
@@ -171,7 +190,7 @@ describe("CLI", () => {
 
 			expect(result).toBe(0);
 			expect(calls).toEqual([`${command}:${"abc123"}`]);
-			expect(captured.stdout).toEqual([message]);
+			expect(captured.stdout).toEqual([`✓ ${message}`]);
 			expect(captured.stderr).toEqual([]);
 		}
 	});
@@ -201,7 +220,7 @@ describe("CLI", () => {
 			expect(calls).toEqual([]);
 			expect(captured.stdout).toEqual([]);
 			expect(captured.stderr).toHaveLength(1);
-			expect(captured.stderr[0]).toContain("Usage: torrent-tui");
+			expect(captured.stderr[0]).toContain("usage: torrent-tui");
 		}
 	});
 
@@ -221,10 +240,13 @@ describe("CLI", () => {
 				listOutput.output,
 			),
 		).toBe(0);
-		expect(listOutput.stdout[1]).toContain("Torrentname");
-		expect(listOutput.stdout[1]).toContain("Error: Torrentname");
-		expect(listOutput.stdout[1]).not.toContain("\u001b");
-		expect(listOutput.stdout[1]).not.toContain("\n");
+		expect(listOutput.stdout.join("\n")).toContain(
+			"✗ Torrentname — Error: Torrentname",
+		);
+		expect(listOutput.stdout.join("\n")).not.toContain("\u001b");
+		expect(listOutput.stdout.every((line) => !line.includes("\n"))).toBe(
+			true,
+		);
 
 		const addOutput = captureOutput();
 		expect(
@@ -242,7 +264,7 @@ describe("CLI", () => {
 				addOutput.output,
 			),
 		).toBe(0);
-		expect(addOutput.stdout).toEqual(["Added Torrentname (Torrentname)"]);
+		expect(addOutput.stdout).toEqual(["✓ Added Torrentname (Torrentname)"]);
 
 		const errorOutput = captureOutput();
 		expect(
@@ -256,7 +278,7 @@ describe("CLI", () => {
 				errorOutput.output,
 			),
 		).toBe(1);
-		expect(errorOutput.stderr).toEqual(["Error: Torrentname"]);
+		expect(errorOutput.stderr).toEqual(["✗ Error: Torrentname"]);
 	});
 
 	test("keeps a successful mutation when the follow-up refresh fails", async () => {
@@ -272,7 +294,7 @@ describe("CLI", () => {
 		);
 
 		expect(result).toBe(0);
-		expect(captured.stdout).toEqual(["Started abc123"]);
+		expect(captured.stdout).toEqual(["✓ Started abc123"]);
 		expect(captured.stderr).toEqual(["Warning: list refresh failed"]);
 	});
 
@@ -286,8 +308,22 @@ describe("CLI", () => {
 			2,
 		);
 		expect(usage.stdout).toEqual([]);
-		expect(usage.stderr).toHaveLength(3);
-		expect(usage.stderr[0]).toContain("Usage: torrent-tui");
+		expect(usage.stderr).toHaveLength(30);
+		expect(usage.stderr[0]).toBe("usage: torrent-tui <command>");
+		expect(usage.stderr.join("\n")).toContain("remove <hash>");
+
+		const help = captureOutput();
+		expect(await runCli(["--help"], makeOperations(), help.output)).toBe(0);
+		expect(help.stdout[0]).toBe("usage: torrent-tui <command>");
+		expect(help.stdout.join("\n")).toContain("add <source>");
+		expect(help.stderr).toEqual([]);
+
+		const version = captureOutput();
+		expect(
+			await runCli(["--version"], makeOperations(), version.output),
+		).toBe(0);
+		expect(version.stdout).toEqual([packageMetadata.version]);
+		expect(version.stderr).toEqual([]);
 
 		const failure = captureOutput();
 		const result = await runCli(
@@ -302,6 +338,6 @@ describe("CLI", () => {
 
 		expect(result).toBe(1);
 		expect(failure.stdout).toEqual([]);
-		expect(failure.stderr).toEqual(["Error: stop unavailable"]);
+		expect(failure.stderr).toEqual(["✗ Error: stop unavailable"]);
 	});
 });
