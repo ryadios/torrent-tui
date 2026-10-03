@@ -15,6 +15,12 @@ const operations: TorrentOperations = {
 	listTorrents: () => new Promise(() => {}),
 	getTorrentDetails: () => new Promise(() => {}),
 	getSessionStats: () => new Promise(() => {}),
+	getSession: async () => ({
+		version: "4.0.6",
+		rpc_version_semver: "17.0.0",
+		download_dir: "/downloads",
+		peer_port: 51413,
+	}),
 	addTorrent: async () => ({
 		torrent_added: {
 			id: 1,

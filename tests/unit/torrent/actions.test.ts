@@ -7,6 +7,7 @@ import {
 	stopTorrent,
 	type TorrentOperations,
 } from "../../../src/torrent/actions";
+import { expandTorrentPath } from "../../../src/torrent/source";
 import type {
 	TorrentAddResult,
 	TorrentList,
@@ -28,6 +29,12 @@ function makeClient(
 		listTorrents: async () => torrentList,
 		getTorrentDetails: async () => undefined,
 		getSessionStats: async () => ({ download_speed: 0, upload_speed: 0 }),
+		getSession: async () => ({
+			version: "4.0.6",
+			rpc_version_semver: "17.0.0",
+			download_dir: "/downloads",
+			peer_port: 51413,
+		}),
 		addTorrent: async () => addedResult,
 		startTorrent: async () => {},
 		stopTorrent: async () => {},
@@ -50,10 +57,17 @@ describe("torrent actions", () => {
 			},
 		});
 
-		const result = await addTorrent(client, "magnet:?xt=urn:btih:abc123");
+		const result = await addTorrent(
+			client,
+			"magnet:?xt=urn:btih:abc123",
+			"downloads",
+		);
 
 		expect(calls).toEqual([
-			'add:{"filename":"magnet:?xt=urn:btih:abc123"}',
+			`add:${JSON.stringify({
+				filename: "magnet:?xt=urn:btih:abc123",
+				download_dir: expandTorrentPath("downloads"),
+			})}`,
 			"list",
 		]);
 		expect(result).toEqual({
