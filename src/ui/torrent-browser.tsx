@@ -13,6 +13,7 @@ import {
 
 type TorrentBrowserProps = {
 	source: string;
+	mode: "source" | "destination";
 	onSelect: (path: string) => void;
 	onBack: () => void;
 };
@@ -24,6 +25,7 @@ type BrowserState =
 
 export function TorrentBrowser({
 	source,
+	mode,
 	onSelect,
 	onBack,
 }: TorrentBrowserProps) {
@@ -31,6 +33,7 @@ export function TorrentBrowser({
 	const [browser, setBrowser] = useState<BrowserState>({ status: "loading" });
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const selection = useRef(0);
+	const returnToPath = useRef<string | undefined>(undefined);
 	const scrollRef = useRef<ScrollBoxRenderable | null>(null);
 
 	useEffect(() => {
@@ -52,16 +55,45 @@ export function TorrentBrowser({
 		setBrowser({ status: "loading" });
 		void readTorrentDirectory(directory)
 			.then((entries) => {
-				if (active) setBrowser({ status: "loaded", entries });
+				if (!active) return;
+				const parent = dirname(directory);
+				const visibleEntries =
+					mode === "destination"
+						? entries.filter((entry) => entry.kind === "directory")
+						: entries;
+				const nextEntries = [
+					...(parent !== directory
+						? [
+								{
+									name: "..",
+									path: parent,
+									kind: "directory" as const,
+								},
+							]
+						: []),
+					...visibleEntries,
+				];
+				const returnPath = returnToPath.current;
+				const index = returnPath
+					? nextEntries.findIndex(
+							(entry) => entry.path === returnPath,
+						)
+					: 0;
+				returnToPath.current = undefined;
+				selection.current = Math.max(index, 0);
+				setSelectedIndex(selection.current);
+				setBrowser({ status: "loaded", entries: visibleEntries });
 			})
 			.catch(() => {
-				if (active) setBrowser({ status: "failed" });
+				if (!active) return;
+				returnToPath.current = undefined;
+				setBrowser({ status: "failed" });
 			});
 
 		return () => {
 			active = false;
 		};
-	}, [directory]);
+	}, [directory, mode]);
 
 	const parent = directory ? dirname(directory) : undefined;
 	const entries =
@@ -108,47 +140,74 @@ export function TorrentBrowser({
 		setSelectedIndex(nextIndex);
 	}
 
-	function open(entry: TorrentPathEntry | undefined): void {
-		if (!entry) return;
-		if (entry.kind === "directory") setDirectory(entry.path);
-		else onSelect(compactTorrentPath(entry.path));
+	function enterDirectory(entry: TorrentPathEntry | undefined): void {
+		if (entry?.kind === "directory") setDirectory(entry.path);
+	}
+
+	function goToParent(): void {
+		if (!directory || !parent || parent === directory) return;
+		returnToPath.current = directory;
+		setDirectory(parent);
+	}
+
+	function select(): void {
+		if (!directory) return;
+		if (mode === "destination") {
+			onSelect(compactTorrentPath(directory));
+			return;
+		}
+
+		const entry = entries[selection.current];
+		if (entry?.kind === "file") onSelect(compactTorrentPath(entry.path));
 	}
 
 	useKeyboard((key) => {
 		if (key.ctrl || key.meta || key.shift) return;
 
 		if (key.name === "escape") {
+			key.preventDefault();
 			key.stopPropagation();
 			onBack();
 			return;
 		}
-		if (key.name === "backspace" && !key.repeated) {
+		if (key.name === "h" || key.name === "left") {
+			key.preventDefault();
 			key.stopPropagation();
-			if (directory && parent && parent !== directory)
-				setDirectory(parent);
+			goToParent();
+			return;
+		}
+		if (key.name === "l" || key.name === "right") {
+			key.preventDefault();
+			key.stopPropagation();
+			enterDirectory(entries[selection.current]);
 			return;
 		}
 		if (key.name === "return" && !key.repeated) {
+			key.preventDefault();
 			key.stopPropagation();
-			open(entries[selection.current]);
+			select();
 			return;
 		}
 		if (key.name === "j" || key.name === "down") {
+			key.preventDefault();
 			key.stopPropagation();
 			move("next");
 			return;
 		}
 		if (key.name === "k" || key.name === "up") {
+			key.preventDefault();
 			key.stopPropagation();
 			move("previous");
 			return;
 		}
 		if (key.name === "home") {
+			key.preventDefault();
 			key.stopPropagation();
 			move("first");
 			return;
 		}
 		if (key.name === "end") {
+			key.preventDefault();
 			key.stopPropagation();
 			move("last");
 		}
@@ -180,7 +239,9 @@ export function TorrentBrowser({
 					</text>
 				) : entries.length === 0 ? (
 					<text fg={theme.textMuted} selectable={false}>
-						No torrent files
+						{mode === "destination"
+							? "No folders"
+							: "No torrent files"}
 					</text>
 				) : (
 					entries.map((entry, index) => (
@@ -215,8 +276,16 @@ export function TorrentBrowser({
 			</scrollbox>
 			<DialogHints
 				left={[
-					{ key: "Enter", label: "open" },
-					{ key: "Backspace", label: "parent" },
+					{ key: "j/k", label: "move" },
+					{ key: "h/←", label: "parent" },
+					{ key: "l/→", label: "enter" },
+					{
+						key: "Enter",
+						label:
+							mode === "destination"
+								? "use folder"
+								: "select torrent",
+					},
 				]}
 				right={[{ key: "Esc", label: "back" }]}
 			/>

@@ -298,7 +298,7 @@ describe("App", () => {
 
 			const frame = setup.captureCharFrame();
 			expect(frame).toContain("Tab browse");
-			expect(frame).toContain("Enter add");
+			expect(frame).toContain("Enter continue");
 			expect(frame).toContain("Esc close");
 			const addSpans = setup
 				.captureSpans()

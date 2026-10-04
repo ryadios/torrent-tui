@@ -478,7 +478,28 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 		setAdd({ open: false });
 	}
 
-	async function submitAdd(source: string): Promise<void> {
+	async function loadDefaultDownloadLocation(): Promise<{
+		path: string;
+		warning?: string;
+	}> {
+		try {
+			const { download_dir } = await operations.getSession();
+			if (download_dir.trim()) return { path: download_dir };
+		} catch {
+			// Fall back when the session request fails.
+		}
+
+		return {
+			path: process.cwd(),
+			warning:
+				"Unable to load Transmission's download location; using the current directory",
+		};
+	}
+
+	async function submitAdd(
+		source: string,
+		downloadDirectory: string,
+	): Promise<void> {
 		if (!add.open || add.pending || busy.current) return;
 
 		busy.current = true;
@@ -490,7 +511,11 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 		);
 
 		try {
-			const outcome = await addTorrent(operations, source);
+			const outcome = await addTorrent(
+				operations,
+				source,
+				downloadDirectory,
+			);
 			if (!mounted.current) return;
 
 			if (outcome.status === "refreshed") {
@@ -909,8 +934,9 @@ export function AppInner({ operations, onQuitBlockedChange }: AppInnerProps) {
 				<AddDialog
 					pending={add.pending}
 					error={add.error}
-					onSubmit={(source) => {
-						void submitAdd(source);
+					onLoadDefaultLocation={loadDefaultDownloadLocation}
+					onSubmit={(source, downloadDirectory) => {
+						void submitAdd(source, downloadDirectory);
 					}}
 					onClose={closeAdd}
 					onClearError={() => {
