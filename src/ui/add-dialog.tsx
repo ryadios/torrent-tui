@@ -80,7 +80,7 @@ export function AddDialog({
 			step !== "review" &&
 			focus === "input" &&
 			!pending &&
-			!loadingLocation
+			(!loadingLocation || step === "source")
 		) {
 			inputRef.current?.focus();
 		} else {
@@ -150,14 +150,14 @@ export function AddDialog({
 
 		locationLoadPending.current = true;
 		setLoadingLocation(true);
+		setFocus("input");
+		setStep("location");
 		void onLoadDefaultLocation()
 			.then(({ path, warning }) => {
 				if (!mounted.current) return;
 				setDownloadDirectory(path);
 				setLocationWarning(warning);
 				locationLoaded.current = true;
-				setFocus("input");
-				setStep("location");
 			})
 			.catch(() => {
 				if (!mounted.current) return;
@@ -211,9 +211,12 @@ export function AddDialog({
 			return;
 		}
 		if (browser) return;
-		if (loadingLocation) {
+		if (loadingLocation && step === "location") {
 			consume(key);
-			if (key.name === "escape") onClose();
+			if (key.name === "escape") {
+				setStep("source");
+				setFocus("input");
+			}
 			return;
 		}
 		if (step === "review") {
@@ -317,23 +320,33 @@ export function AddDialog({
 	const message =
 		validationError ??
 		error ??
-		(step === "source" &&
-		completionActive &&
-		completion.status === "loading"
-			? "Loading paths..."
+		(loadingLocation && step === "source"
+			? "Loading default location…"
 			: step === "source" &&
 					completionActive &&
-					completion.status === "failed"
-				? "Unable to read directory"
+					completion.status === "loading"
+				? "Loading paths..."
 				: step === "source" &&
 						completionActive &&
-						completion.status === "loaded" &&
-						suggestions.length === 0
-					? "No matching paths"
-					: undefined);
+						completion.status === "failed"
+					? "Unable to read directory"
+					: step === "source" &&
+							completionActive &&
+							completion.status === "loaded" &&
+							suggestions.length === 0
+						? "No matching paths"
+						: undefined);
 
 	return (
-		<Dialog title={step === "review" ? "Confirm torrent" : "Add torrent"}>
+		<Dialog
+			title={
+				step === "source"
+					? "Torrent source · 1/3"
+					: step === "location"
+						? "Download location · 2/3"
+						: "Confirm torrent · 3/3"
+			}
+		>
 			{step === "source" ? (
 				<>
 					<box flexDirection="column">
@@ -344,11 +357,7 @@ export function AddDialog({
 							ref={inputRef}
 							width="100%"
 							value={source}
-							focused={
-								focus === "input" &&
-								!pending &&
-								!loadingLocation
-							}
+							focused={focus === "input" && !pending}
 							placeholder="Magnet, URL, or .torrent path"
 							backgroundColor={theme.backgroundElement}
 							focusedBackgroundColor={theme.backgroundElement}
@@ -393,8 +402,16 @@ export function AddDialog({
 				</>
 			) : step === "location" ? (
 				<box flexDirection="column">
+					<text
+						fg={theme.textMuted}
+						selectable={false}
+						wrapMode="none"
+						truncate
+					>
+						{`Torrent: ${source}`}
+					</text>
 					<text fg={theme.textMuted} selectable={false}>
-						Download location
+						Save to
 					</text>
 					<input
 						ref={inputRef}
@@ -403,7 +420,12 @@ export function AddDialog({
 						focused={
 							focus === "input" && !pending && !loadingLocation
 						}
-						placeholder="Download directory"
+						placeholder={
+							loadingLocation
+								? "Loading default location…"
+								: "Download directory"
+						}
+						placeholderColor={theme.textMuted}
 						backgroundColor={theme.backgroundElement}
 						focusedBackgroundColor={theme.backgroundElement}
 						textColor={theme.text}
@@ -435,14 +457,18 @@ export function AddDialog({
 						paddingLeft: 1,
 						paddingRight: 1,
 						backgroundColor:
-							focus === "browse"
+							focus === "browse" &&
+							!(loadingLocation && step === "location")
 								? theme.backgroundElement
 								: theme.backgroundPanel,
 					}}
 				>
 					<text
 						fg={
-							focus === "browse" ? theme.primary : theme.textMuted
+							focus === "browse" &&
+							!(loadingLocation && step === "location")
+								? theme.primary
+								: theme.textMuted
 						}
 						selectable={false}
 					>
@@ -459,16 +485,12 @@ export function AddDialog({
 				<text fg={theme.textMuted} selectable={false}>
 					Adding...
 				</text>
-			) : loadingLocation ? (
-				<text fg={theme.textMuted} selectable={false}>
-					Loading download location...
-				</text>
-			) : message ? (
+			) : loadingLocation && step === "location" ? null : message ? (
 				<text
 					fg={
 						validationError ||
 						error ||
-						completion.status === "failed"
+						(completion.status === "failed" && !loadingLocation)
 							? theme.error
 							: theme.textMuted
 					}
@@ -482,14 +504,20 @@ export function AddDialog({
 					step === "review"
 						? [{ key: "Enter", label: "add" }]
 						: [
-								{ key: "Tab", label: "browse" },
-								{
-									key: "Enter",
-									label:
-										step === "source"
-											? "continue"
-											: "review",
-								},
+								...(!loadingLocation || step === "source"
+									? [{ key: "Tab", label: "browse" }]
+									: []),
+								...(!loadingLocation
+									? [
+											{
+												key: "Enter",
+												label:
+													step === "source"
+														? "continue"
+														: "review",
+											},
+										]
+									: []),
 							]
 				}
 				right={[

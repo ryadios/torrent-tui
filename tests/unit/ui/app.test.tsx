@@ -264,7 +264,7 @@ describe("App", () => {
 			const dialogTitle = setup
 				.captureSpans()
 				.lines.flatMap((line) => line.spans)
-				.find((span) => span.text.includes("Add torrent"));
+				.find((span) => span.text.includes("Torrent source · 1/3"));
 			expect(
 				dialogTitle?.bg.equals(RGBA.fromHex(theme.backgroundPanel)),
 			).toBe(true);

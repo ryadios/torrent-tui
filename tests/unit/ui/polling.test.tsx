@@ -238,7 +238,7 @@ describe("App polling", () => {
 
 			act(() => setup.mockInput.pressKey("a"));
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("Add torrent");
+			expect(setup.captureCharFrame()).toContain("Torrent source · 1/3");
 
 			act(() => interval.tick());
 			await setup.renderOnce();
@@ -251,7 +251,7 @@ describe("App polling", () => {
 			await setup.renderOnce();
 
 			const frame = setup.captureCharFrame();
-			expect(frame).toContain("Add torrent");
+			expect(frame).toContain("Torrent source · 1/3");
 			expect(frame).toContain("Found");
 			expect(frame).not.toContain("No torrents");
 		} finally {

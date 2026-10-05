@@ -176,16 +176,50 @@ describe("AddDialog", () => {
 			act(() => setup.mockInput.pressEnter());
 			await setup.renderOnce();
 			expect(loadDefaultLocation).toHaveBeenCalledTimes(1);
+			let frame = setup.captureCharFrame();
+			expect(frame).toContain("Download location · 2/3");
+			expect(frame).toContain("Torrent: magnet:?xt=urn:btih:abc123");
+			expect(frame).toContain("Loading default location…");
+			expect(frame).not.toContain("Loading download location...");
+
+			act(() => setup.mockInput.pressTab());
+			act(() => setup.mockInput.pressEnter());
+			await setup.renderOnce();
 			expect(setup.captureCharFrame()).toContain(
-				"Loading download location...",
+				"Download location · 2/3",
 			);
+
+			act(() => setup.mockInput.pressEscape());
+			await setup.renderOnce();
+			frame = setup.captureCharFrame();
+			expect(frame).toContain("Torrent source · 1/3");
+			expect(frame).toContain("Loading default location…");
+			expect(frame).not.toContain("Enter continue");
+
+			await act(async () => {
+				await setup.mockInput.typeText("-edited");
+			});
+			act(() => setup.mockInput.pressEnter());
+			await setup.renderOnce();
+			expect(setup.captureCharFrame()).toContain("Torrent source · 1/3");
+			expect(loadDefaultLocation).toHaveBeenCalledTimes(1);
 
 			await act(async () => {
 				location.resolve({ path: "/transmission/Downloads" });
 				await location.promise;
 			});
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("Download location");
+			expect(setup.captureCharFrame()).toContain("Torrent source · 1/3");
+			expect(setup.captureCharFrame()).not.toContain(
+				"Loading default location…",
+			);
+
+			act(() => setup.mockInput.pressEnter());
+			await setup.renderOnce();
+			expect(setup.captureCharFrame()).toContain(
+				"Download location · 2/3",
+			);
+			expect(setup.captureCharFrame()).toContain("Save to");
 			expect(setup.captureCharFrame()).toContain(
 				"/transmission/Downloads",
 			);
@@ -193,7 +227,7 @@ describe("AddDialog", () => {
 			act(() => setup.mockInput.pressEscape());
 			await setup.renderOnce();
 			expect(setup.captureCharFrame()).toContain(
-				"magnet:?xt=urn:btih:abc123",
+				"magnet:?xt=urn:btih:abc123-edited",
 			);
 
 			act(() => setup.mockInput.pressEnter());
@@ -201,15 +235,27 @@ describe("AddDialog", () => {
 			expect(loadDefaultLocation).toHaveBeenCalledTimes(1);
 			act(() => setup.mockInput.pressEnter());
 			await setup.renderOnce();
+			expect(setup.captureCharFrame()).toContain("Confirm torrent · 3/3");
 			expect(setup.captureCharFrame()).toContain("Source");
 			expect(setup.captureCharFrame()).toContain(
 				"/transmission/Downloads",
 			);
 
+			act(() => setup.mockInput.pressEscape());
+			await setup.renderOnce();
+			expect(setup.captureCharFrame()).toContain(
+				"Download location · 2/3",
+			);
+			act(() => setup.mockInput.pressEnter());
+			await setup.renderOnce();
+
 			act(() => setup.mockInput.pressEnter());
 			await setup.renderOnce();
 			expect(submitted).toEqual([
-				["magnet:?xt=urn:btih:abc123", "/transmission/Downloads"],
+				[
+					"magnet:?xt=urn:btih:abc123-edited",
+					"/transmission/Downloads",
+				],
 			]);
 		} finally {
 			act(() => setup.renderer.destroy());
