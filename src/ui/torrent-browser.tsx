@@ -153,7 +153,9 @@ export function TorrentBrowser({
 	function select(): void {
 		if (!directory) return;
 		if (mode === "destination") {
-			onSelect(compactTorrentPath(directory));
+			if (browser.status === "loaded") {
+				onSelect(compactTorrentPath(directory));
+			}
 			return;
 		}
 
