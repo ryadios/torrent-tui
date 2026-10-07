@@ -6,6 +6,7 @@ import { Dialog, DialogHints } from "./dialog";
 import { theme } from "./theme";
 import { TorrentBrowser } from "./torrent-browser";
 import {
+	compactTorrentPath,
 	listTorrentPathSuggestions,
 	type TorrentPathSuggestion,
 } from "./torrent-paths";
@@ -155,7 +156,7 @@ export function AddDialog({
 		void onLoadDefaultLocation()
 			.then(({ path, warning }) => {
 				if (!mounted.current) return;
-				setDownloadDirectory(path);
+				setDownloadDirectory(compactTorrentPath(path));
 				setLocationWarning(warning);
 				locationLoaded.current = true;
 			})
