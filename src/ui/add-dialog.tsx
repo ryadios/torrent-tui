@@ -447,7 +447,9 @@ export function AddDialog({
 						Download location
 					</text>
 					<text fg={theme.text} selectable={false} wrapMode="char">
-						{expandTorrentPath(downloadDirectory)}
+						{compactTorrentPath(
+							expandTorrentPath(downloadDirectory),
+						)}
 					</text>
 				</>
 			)}
