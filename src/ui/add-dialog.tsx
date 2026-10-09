@@ -440,13 +440,23 @@ export function AddDialog({
 					<text fg={theme.textMuted} selectable={false}>
 						Source
 					</text>
-					<text fg={theme.text} selectable={false} wrapMode="char">
+					<text
+						fg={theme.text}
+						selectable={false}
+						wrapMode="none"
+						truncate
+					>
 						{source}
 					</text>
 					<text fg={theme.textMuted} selectable={false}>
 						Download location
 					</text>
-					<text fg={theme.text} selectable={false} wrapMode="char">
+					<text
+						fg={theme.text}
+						selectable={false}
+						wrapMode="none"
+						truncate
+					>
 						{compactTorrentPath(
 							expandTorrentPath(downloadDirectory),
 						)}
