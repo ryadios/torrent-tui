@@ -15,6 +15,12 @@ const operations: TorrentOperations = {
 	listTorrents: () => new Promise(() => {}),
 	getTorrentDetails: () => new Promise(() => {}),
 	getSessionStats: () => new Promise(() => {}),
+	getSession: async () => ({
+		version: "4.0.6",
+		rpc_version_semver: "17.0.0",
+		download_dir: "/downloads",
+		peer_port: 51413,
+	}),
 	addTorrent: async () => ({
 		torrent_added: {
 			id: 1,
@@ -258,7 +264,7 @@ describe("App", () => {
 			const dialogTitle = setup
 				.captureSpans()
 				.lines.flatMap((line) => line.spans)
-				.find((span) => span.text.includes("Add torrent"));
+				.find((span) => span.text.includes("Torrent source · 1/3"));
 			expect(
 				dialogTitle?.bg.equals(RGBA.fromHex(theme.backgroundPanel)),
 			).toBe(true);
@@ -292,7 +298,7 @@ describe("App", () => {
 
 			const frame = setup.captureCharFrame();
 			expect(frame).toContain("Tab browse");
-			expect(frame).toContain("Enter add");
+			expect(frame).toContain("Enter continue");
 			expect(frame).toContain("Esc close");
 			const addSpans = setup
 				.captureSpans()

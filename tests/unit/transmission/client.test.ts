@@ -220,11 +220,13 @@ describe("TransmissionClient operations", () => {
 
 		const result = await new TransmissionClient().addTorrent({
 			filename: "/tmp/example.torrent",
+			download_dir: "/tmp/downloads",
 		});
 
 		expect(result).toEqual(addResult);
 		expectRpcRequest(requestAt(requests, 0), "torrent_add", {
 			filename: "/tmp/example.torrent",
+			download_dir: "/tmp/downloads",
 			paused: false,
 		});
 	});

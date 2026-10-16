@@ -3,13 +3,14 @@ import type {
 	TorrentAddResult,
 	TorrentList,
 } from "../transmission/types/torrent";
-import { resolveTorrentSource } from "./source";
+import { expandTorrentPath, resolveTorrentSource } from "./source";
 
 export type TorrentOperations = Pick<
 	TransmissionClient,
 	| "listTorrents"
 	| "getTorrentDetails"
 	| "getSessionStats"
+	| "getSession"
 	| "addTorrent"
 	| "startTorrent"
 	| "stopTorrent"
@@ -57,11 +58,15 @@ export async function stopTorrent(
 export async function addTorrent(
 	client: TorrentOperations,
 	source: string,
+	downloadDir?: string,
 ): Promise<AddTorrentOutcome> {
 	if (!source.trim()) throw new Error("Torrent source is required");
 
+	const torrentSource = await resolveTorrentSource(source);
 	const addResult = await client.addTorrent(
-		await resolveTorrentSource(source),
+		downloadDir
+			? { ...torrentSource, download_dir: expandTorrentPath(downloadDir) }
+			: torrentSource,
 	);
 	return { ...(await refreshTorrents(client)), addResult };
 }

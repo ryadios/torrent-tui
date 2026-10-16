@@ -15,6 +15,12 @@ const operations: TorrentOperations = {
 	listTorrents: () => new Promise(() => {}),
 	getTorrentDetails: () => new Promise(() => {}),
 	getSessionStats: () => new Promise(() => {}),
+	getSession: async () => ({
+		version: "4.0.6",
+		rpc_version_semver: "17.0.0",
+		download_dir: "/downloads",
+		peer_port: 51413,
+	}),
 	addTorrent: async () => ({
 		torrent_added: {
 			id: 1,
@@ -232,7 +238,7 @@ describe("App polling", () => {
 
 			act(() => setup.mockInput.pressKey("a"));
 			await setup.renderOnce();
-			expect(setup.captureCharFrame()).toContain("Add torrent");
+			expect(setup.captureCharFrame()).toContain("Torrent source · 1/3");
 
 			act(() => interval.tick());
 			await setup.renderOnce();
@@ -245,7 +251,7 @@ describe("App polling", () => {
 			await setup.renderOnce();
 
 			const frame = setup.captureCharFrame();
-			expect(frame).toContain("Add torrent");
+			expect(frame).toContain("Torrent source · 1/3");
 			expect(frame).toContain("Found");
 			expect(frame).not.toContain("No torrents");
 		} finally {

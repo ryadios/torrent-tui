@@ -1,11 +1,12 @@
 import type { InputRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
-import { isRemoteTorrentSource } from "../torrent/source";
+import { expandTorrentPath, isRemoteTorrentSource } from "../torrent/source";
 import { Dialog, DialogHints } from "./dialog";
 import { theme } from "./theme";
 import { TorrentBrowser } from "./torrent-browser";
 import {
+	compactTorrentPath,
 	listTorrentPathSuggestions,
 	type TorrentPathSuggestion,
 } from "./torrent-paths";
@@ -15,7 +16,8 @@ const MAX_SUGGESTIONS = 6;
 type AddDialogProps = {
 	pending: boolean;
 	error?: string;
-	onSubmit: (source: string) => void;
+	onLoadDefaultLocation: () => Promise<{ path: string; warning?: string }>;
+	onSubmit: (source: string, downloadDirectory: string) => void;
 	onClose: () => void;
 	onClearError: () => void;
 };
@@ -29,13 +31,20 @@ type CompletionState =
 export function AddDialog({
 	pending,
 	error,
+	onLoadDefaultLocation,
 	onSubmit,
 	onClose,
 	onClearError,
 }: AddDialogProps) {
+	const [step, setStep] = useState<"source" | "location" | "review">(
+		"source",
+	);
+	const [browser, setBrowser] = useState<"source" | "location">();
 	const [source, setSource] = useState("");
-	const [focus, setFocus] = useState<"source" | "browse">("source");
-	const [view, setView] = useState<"add" | "browse">("add");
+	const [downloadDirectory, setDownloadDirectory] = useState("");
+	const [focus, setFocus] = useState<"input" | "browse">("input");
+	const [loadingLocation, setLoadingLocation] = useState(false);
+	const [locationWarning, setLocationWarning] = useState<string>();
 	const [validationError, setValidationError] = useState<string>();
 	const [dismissedSource, setDismissedSource] = useState<string>();
 	const [completion, setCompletion] = useState<CompletionState>({
@@ -44,11 +53,15 @@ export function AddDialog({
 	});
 	const [suggestionIndex, setSuggestionIndex] = useState(0);
 	const suggestionSelection = useRef(0);
+	const locationLoaded = useRef(false);
+	const locationLoadPending = useRef(false);
+	const mounted = useRef(true);
 	const inputRef = useRef<InputRenderable | null>(null);
 
 	const completionActive =
-		view === "add" &&
-		focus === "source" &&
+		step === "source" &&
+		browser === undefined &&
+		focus === "input" &&
 		!pending &&
 		Boolean(source) &&
 		!isRemoteTorrentSource(source) &&
@@ -56,12 +69,25 @@ export function AddDialog({
 	const suggestions = completion.items.slice(0, MAX_SUGGESTIONS);
 
 	useEffect(() => {
-		if (view === "add" && focus === "source" && !pending) {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (
+			!browser &&
+			step !== "review" &&
+			focus === "input" &&
+			!pending &&
+			(!loadingLocation || step === "source")
+		) {
 			inputRef.current?.focus();
 		} else {
 			inputRef.current?.blur();
 		}
-	}, [focus, pending, view]);
+	}, [browser, focus, loadingLocation, pending, step]);
 
 	useEffect(() => {
 		if (!completionActive) {
@@ -93,6 +119,13 @@ export function AddDialog({
 		onClearError();
 	}
 
+	function updateDownloadDirectory(value: string): void {
+		setDownloadDirectory(value);
+		setLocationWarning(undefined);
+		setValidationError(undefined);
+		onClearError();
+	}
+
 	function acceptSuggestion(item: TorrentPathSuggestion): void {
 		setSource(item.value);
 		setValidationError(undefined);
@@ -102,14 +135,65 @@ export function AddDialog({
 		if (item.kind === "file") setDismissedSource(item.value);
 	}
 
-	function submit(): void {
-		const value = source.trim();
-		if (!value) {
+	function continueFromSource(): void {
+		if (locationLoadPending.current) return;
+		if (!source.trim()) {
 			setValidationError("Torrent source is required");
 			return;
 		}
 		setValidationError(undefined);
-		onSubmit(value);
+		onClearError();
+		if (locationLoaded.current) {
+			setFocus("input");
+			setStep("location");
+			return;
+		}
+
+		locationLoadPending.current = true;
+		setLoadingLocation(true);
+		setFocus("input");
+		setStep("location");
+		void onLoadDefaultLocation()
+			.then(({ path, warning }) => {
+				if (!mounted.current) return;
+				setDownloadDirectory(compactTorrentPath(path));
+				setLocationWarning(warning);
+				locationLoaded.current = true;
+			})
+			.catch(() => {
+				if (!mounted.current) return;
+				setValidationError("Unable to load the download location");
+			})
+			.finally(() => {
+				locationLoadPending.current = false;
+				if (mounted.current) setLoadingLocation(false);
+			});
+	}
+
+	function continueToReview(): void {
+		if (!downloadDirectory.trim()) {
+			setValidationError("Download location is required");
+			return;
+		}
+		setValidationError(undefined);
+		setFocus("input");
+		setStep("review");
+	}
+
+	function submit(): void {
+		const sourceValue = source.trim();
+		if (!sourceValue) {
+			setStep("source");
+			setValidationError("Torrent source is required");
+			return;
+		}
+		if (!downloadDirectory.trim()) {
+			setStep("location");
+			setValidationError("Download location is required");
+			return;
+		}
+		setValidationError(undefined);
+		onSubmit(sourceValue, downloadDirectory);
 	}
 
 	function consume(key: {
@@ -127,7 +211,26 @@ export function AddDialog({
 			consume(key);
 			return;
 		}
-		if (view === "browse") return;
+		if (browser) return;
+		if (loadingLocation && step === "location") {
+			consume(key);
+			if (key.name === "escape") {
+				setStep("source");
+				setFocus("input");
+			}
+			return;
+		}
+		if (step === "review") {
+			if (key.name === "escape") {
+				consume(key);
+				setStep("location");
+				setFocus("input");
+			} else if (key.name === "return" && !key.repeated) {
+				consume(key);
+				submit();
+			}
+			return;
+		}
 
 		if (completionActive) {
 			if (key.name === "escape") {
@@ -160,36 +263,55 @@ export function AddDialog({
 
 		if (key.name === "escape") {
 			consume(key);
-			onClose();
+			if (step === "location") {
+				setStep("source");
+				setFocus("input");
+			} else onClose();
 			return;
 		}
 		if (key.name === "tab") {
 			consume(key);
-			setFocus((current) => (current === "source" ? "browse" : "source"));
+			setFocus((current) => (current === "input" ? "browse" : "input"));
 			return;
 		}
-		if (key.name === "return" && focus === "browse") {
+		if (key.name === "return" && focus === "browse" && !key.repeated) {
 			consume(key);
-			setView("browse");
+			setBrowser(step);
 		}
 	});
 
-	if (view === "browse") {
+	if (browser) {
 		return (
-			<Dialog title="Select torrent" height="70%">
+			<Dialog
+				title={
+					browser === "source"
+						? "Select torrent"
+						: "Select download location"
+				}
+				height="70%"
+			>
 				<TorrentBrowser
-					source={source}
+					source={browser === "source" ? source : downloadDirectory}
+					mode={browser === "source" ? "source" : "destination"}
 					onSelect={(path) => {
-						setSource(path);
-						setValidationError(undefined);
+						if (browser === "source") {
+							setSource(path);
+							setDismissedSource(path);
+							setStep("source");
+							setValidationError(undefined);
+						} else {
+							setDownloadDirectory(path);
+							setLocationWarning(undefined);
+							setValidationError(undefined);
+							setStep("location");
+						}
 						onClearError();
-						setDismissedSource(path);
-						setView("add");
-						setFocus("source");
+						setBrowser(undefined);
+						setFocus("input");
 					}}
 					onBack={() => {
-						setView("add");
-						setFocus("source");
+						setBrowser(undefined);
+						setFocus("input");
 					}}
 				/>
 			</Dialog>
@@ -199,96 +321,189 @@ export function AddDialog({
 	const message =
 		validationError ??
 		error ??
-		(completionActive && completion.status === "loading"
-			? "Loading paths..."
-			: completionActive && completion.status === "failed"
-				? "Unable to read directory"
-				: completionActive &&
-						completion.status === "loaded" &&
-						suggestions.length === 0
-					? "No matching paths"
-					: undefined);
+		(loadingLocation && step === "source"
+			? "Loading default location…"
+			: step === "source" &&
+					completionActive &&
+					completion.status === "loading"
+				? "Loading paths..."
+				: step === "source" &&
+						completionActive &&
+						completion.status === "failed"
+					? "Unable to read directory"
+					: step === "source" &&
+							completionActive &&
+							completion.status === "loaded" &&
+							suggestions.length === 0
+						? "No matching paths"
+						: undefined);
 
 	return (
-		<Dialog title="Add torrent">
-			<box flexDirection="column">
-				<text fg={theme.textMuted} selectable={false}>
-					Source
-				</text>
-				<input
-					ref={inputRef}
-					width="100%"
-					value={source}
-					focused={focus === "source" && !pending}
-					placeholder="Magnet, URL, or .torrent path"
-					backgroundColor={theme.backgroundElement}
-					focusedBackgroundColor={theme.backgroundElement}
-					textColor={theme.text}
-					cursorColor={theme.primary}
-					onInput={updateSource}
-					onSubmit={submit}
-				/>
-			</box>
-			{completionActive && suggestions.length > 0 ? (
-				<box flexDirection="column">
-					{suggestions.map((suggestion, index) => (
-						<box
-							key={suggestion.path}
-							style={{
-								paddingLeft: 1,
-								backgroundColor:
-									index === suggestionIndex
-										? theme.backgroundElement
-										: theme.backgroundPanel,
-							}}
-						>
-							<text
-								fg={
-									index === suggestionIndex
-										? theme.primary
-										: theme.textMuted
-								}
-								selectable={false}
-								wrapMode="none"
-								truncate
-							>
-								{suggestion.name +
-									(suggestion.kind === "directory"
-										? "/"
-										: "")}
-							</text>
+		<Dialog
+			title={
+				step === "source"
+					? "Torrent source · 1/3"
+					: step === "location"
+						? "Download location · 2/3"
+						: "Confirm torrent · 3/3"
+			}
+		>
+			{step === "source" ? (
+				<>
+					<box flexDirection="column">
+						<text fg={theme.textMuted} selectable={false}>
+							Source
+						</text>
+						<input
+							ref={inputRef}
+							width="100%"
+							value={source}
+							focused={focus === "input" && !pending}
+							placeholder="Magnet, URL, or .torrent path"
+							backgroundColor={theme.backgroundElement}
+							focusedBackgroundColor={theme.backgroundElement}
+							textColor={theme.text}
+							cursorColor={theme.primary}
+							onInput={updateSource}
+							onSubmit={continueFromSource}
+						/>
+					</box>
+					{completionActive && suggestions.length > 0 ? (
+						<box flexDirection="column">
+							{suggestions.map((suggestion, index) => (
+								<box
+									key={suggestion.path}
+									style={{
+										paddingLeft: 1,
+										backgroundColor:
+											index === suggestionIndex
+												? theme.backgroundElement
+												: theme.backgroundPanel,
+									}}
+								>
+									<text
+										fg={
+											index === suggestionIndex
+												? theme.primary
+												: theme.textMuted
+										}
+										selectable={false}
+										wrapMode="none"
+										truncate
+									>
+										{suggestion.name +
+											(suggestion.kind === "directory"
+												? "/"
+												: "")}
+									</text>
+								</box>
+							))}
 						</box>
-					))}
+					) : null}
+				</>
+			) : step === "location" ? (
+				<box flexDirection="column">
+					<text
+						fg={theme.textMuted}
+						selectable={false}
+						wrapMode="none"
+						truncate
+					>
+						{`Torrent: ${source}`}
+					</text>
+					<text fg={theme.textMuted} selectable={false}>
+						Save to
+					</text>
+					<input
+						ref={inputRef}
+						width="100%"
+						value={downloadDirectory}
+						focused={
+							focus === "input" && !pending && !loadingLocation
+						}
+						placeholder={
+							loadingLocation
+								? "Loading default location…"
+								: "Download directory"
+						}
+						placeholderColor={theme.textMuted}
+						backgroundColor={theme.backgroundElement}
+						focusedBackgroundColor={theme.backgroundElement}
+						textColor={theme.text}
+						cursorColor={theme.primary}
+						onInput={updateDownloadDirectory}
+						onSubmit={continueToReview}
+					/>
+				</box>
+			) : (
+				<>
+					<text fg={theme.textMuted} selectable={false}>
+						Source
+					</text>
+					<text
+						fg={theme.text}
+						selectable={false}
+						wrapMode="none"
+						truncate
+					>
+						{source}
+					</text>
+					<text fg={theme.textMuted} selectable={false}>
+						Download location
+					</text>
+					<text
+						fg={theme.text}
+						selectable={false}
+						wrapMode="none"
+						truncate
+					>
+						{compactTorrentPath(
+							expandTorrentPath(downloadDirectory),
+						)}
+					</text>
+				</>
+			)}
+			{step !== "review" ? (
+				<box
+					style={{
+						alignSelf: "flex-end",
+						paddingLeft: 1,
+						paddingRight: 1,
+						backgroundColor:
+							focus === "browse" &&
+							!(loadingLocation && step === "location")
+								? theme.backgroundElement
+								: theme.backgroundPanel,
+					}}
+				>
+					<text
+						fg={
+							focus === "browse" &&
+							!(loadingLocation && step === "location")
+								? theme.primary
+								: theme.textMuted
+						}
+						selectable={false}
+					>
+						Browse
+					</text>
 				</box>
 			) : null}
-			<box
-				style={{
-					alignSelf: "flex-end",
-					paddingLeft: 1,
-					paddingRight: 1,
-					backgroundColor:
-						focus === "browse"
-							? theme.backgroundElement
-							: theme.backgroundPanel,
-				}}
-			>
-				<text
-					fg={focus === "browse" ? theme.primary : theme.textMuted}
-					selectable={false}
-				>
-					Browse
+			{locationWarning && step !== "source" ? (
+				<text fg={theme.warning} selectable={false} wrapMode="word">
+					{locationWarning}
 				</text>
-			</box>
+			) : null}
 			{pending ? (
 				<text fg={theme.textMuted} selectable={false}>
 					Adding...
 				</text>
-			) : message ? (
+			) : loadingLocation && step === "location" ? null : message ? (
 				<text
 					fg={
 						validationError ||
 						error ||
-						completion.status === "failed"
+						(completion.status === "failed" && !loadingLocation)
 							? theme.error
 							: theme.textMuted
 					}
@@ -297,23 +512,39 @@ export function AddDialog({
 					{message}
 				</text>
 			) : null}
-			{completionActive ? (
-				<DialogHints
-					left={[
-						{ key: "↑/↓", label: "select" },
-						{ key: "Tab/Enter", label: "complete" },
-					]}
-					right={[{ key: "Esc", label: "dismiss" }]}
-				/>
-			) : (
-				<DialogHints
-					left={[
-						{ key: "Tab", label: "browse" },
-						{ key: "Enter", label: "add" },
-					]}
-					right={[{ key: "Esc", label: "close" }]}
-				/>
-			)}
+			<DialogHints
+				left={
+					step === "review"
+						? [{ key: "Enter", label: "add" }]
+						: [
+								...(!loadingLocation || step === "source"
+									? [{ key: "Tab", label: "browse" }]
+									: []),
+								...(!loadingLocation
+									? [
+											{
+												key: "Enter",
+												label:
+													step === "source"
+														? "continue"
+														: "review",
+											},
+										]
+									: []),
+							]
+				}
+				right={[
+					{
+						key: "Esc",
+						label:
+							step === "source"
+								? completionActive
+									? "dismiss"
+									: "close"
+								: "back",
+					},
+				]}
+			/>
 		</Dialog>
 	);
 }

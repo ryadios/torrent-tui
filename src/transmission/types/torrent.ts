@@ -47,4 +47,6 @@ export type TorrentAddResult =
 	| { torrent_added: TorrentReference }
 	| { torrent_duplicate: TorrentReference };
 
-export type TorrentAddSource = { filename: string } | { metainfo: string };
+export type TorrentAddSource = ({ filename: string } | { metainfo: string }) & {
+	download_dir?: string;
+};
